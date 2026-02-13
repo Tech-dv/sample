@@ -14,6 +14,7 @@ const adminRoutes = require("./routes/adminRoutes");
 const wagonRoutes = require("./routes/wagonRoutes");
 const cameraRoutes = require("./routes/cameraRoutes");
 const randomCountingRoutes = require("./routes/randomCountingRoutes");
+const dropdownRoutes = require("./routes/dropdownRoutes");
 
 const app = express();
 
@@ -32,6 +33,7 @@ app.use("/", adminRoutes);
 app.use("/", wagonRoutes);
 app.use("/", cameraRoutes);
 app.use("/", randomCountingRoutes);
+app.use("/", dropdownRoutes);
 
 // Error handling
 app.use(notFound);

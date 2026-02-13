@@ -128,6 +128,46 @@ function ReviewerVerify() {
       .catch(console.error);
   }, [role]);
 
+  /* ================= DROPDOWN OPTIONS ================= */
+  const [commodities, setCommodities] = useState([]);
+  const [wagonTypes, setWagonTypes] = useState([]);
+
+  useEffect(() => {
+    // Fetch commodities
+    fetch(`${API_BASE}/dropdown-options?type=commodity`, {
+      headers: {
+        "x-user-role": role || "",
+        "x-reviewer-username": reviewerUsername || "",
+      },
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        setCommodities(data.map(item => item.option_value));
+      })
+      .catch((err) => {
+        console.error("Failed to fetch commodities:", err);
+        // Fallback to default values
+        setCommodities(["Urea granuals", "Red MoP", "DAP", "NPK", "NPS", "TSP", "AS", "APS", "white MoP", "Urea prilled"]);
+      });
+
+    // Fetch wagon types
+    fetch(`${API_BASE}/dropdown-options?type=wagon_type`, {
+      headers: {
+        "x-user-role": role || "",
+        "x-reviewer-username": reviewerUsername || "",
+      },
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        setWagonTypes(data.map(item => item.option_value));
+      })
+      .catch((err) => {
+        console.error("Failed to fetch wagon types:", err);
+        // Fallback to default values
+        setWagonTypes(["HL", "BCN", "BCNA", "BCNA-HS"]);
+      });
+  }, [role, reviewerUsername]);
+
   /* ================= SAVE STATE ================= */
   const [isSaved, setIsSaved] = useState(false);
 
@@ -1134,10 +1174,11 @@ function ReviewerVerify() {
                         style={wagonTableStyles.select}
                       >
                         <option value="">Select</option>
-                        <option value="HL">HL</option>
-                        <option value="BCN">BCN</option>
-                        <option value="BCNA">BCNA</option>
-                        <option value="BCNA-HS">BCNA-HS</option>
+                        {wagonTypes.map((type) => (
+                          <option key={type} value={type}>
+                            {type}
+                          </option>
+                        ))}
                       </select>
                     </td>
 
@@ -1184,16 +1225,11 @@ function ReviewerVerify() {
                         style={wagonTableStyles.select}
                       >
                         <option value="">Select</option>
-                        <option value="Urea granuals">Urea granuals</option>
-                        <option value="Red MoP">Red MoP</option>
-                        <option value="DAP">DAP</option>
-                        <option value="NPK">NPK</option>
-                        <option value="NPS">NPS</option>
-                        <option value="TSP">TSP</option>
-                        <option value="AS">AS</option>
-                        <option value="APS">APS</option>
-                        <option value="white MoP">white MoP</option>
-                        <option value="Urea prilled">Urea prilled</option>
+                        {commodities.map((commodity) => (
+                          <option key={commodity} value={commodity}>
+                            {commodity}
+                          </option>
+                        ))}
                       </select>
                     </td>
 

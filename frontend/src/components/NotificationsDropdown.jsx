@@ -81,8 +81,11 @@ function buildInactiveAlerts({ spur, cameras }) {
       localStorage.setItem(storageKey, detectedAt);
     }
 
+    // Use consistent ID format with AppShell
+    const alertId = `alert-${cam.id}-${spur}`;
+
     return {
-      id: `inactive-${spur}-${cam.id}`,
+      id: alertId,
       spur,
       camera_id: cam.id,
       camera_name: cam.camera_name,
@@ -92,10 +95,11 @@ function buildInactiveAlerts({ spur, cameras }) {
     };
   });
 
-  // cleanup: if camera is active now, remove stored timestamp
+  // cleanup: if camera is active now, remove stored timestamp and viewed status
   const activeIds = cameras.filter((cam) => cam.status).map((cam) => cam.id);
   activeIds.forEach((camId) => {
     localStorage.removeItem(`alert_detected_${camId}_${spur}`);
+    localStorage.removeItem(`viewed_alert_${camId}_${spur}`);
   });
 
   return alerts;
@@ -115,6 +119,7 @@ export default function NotificationsDropdown({
   const fetchAlerts = useCallback(async () => {
     try {
       setLoading(true);
+      const isOpen = open; // Capture current open state
       const role = localStorage.getItem("role") || "ADMIN";
 
       // Currently, backend supports cameras endpoint only.
@@ -136,7 +141,19 @@ export default function NotificationsDropdown({
       merged.sort((a, b) => new Date(b.detected_at) - new Date(a.detected_at));
 
       // Show only latest 3 alerts
-      setAlerts(merged.slice(0, 3));
+      const latestAlerts = merged.slice(0, 3);
+      setAlerts(latestAlerts);
+      
+      // Mark alerts as viewed when dropdown is open
+      if (isOpen) {
+        const viewedAlerts = new Set(JSON.parse(localStorage.getItem("viewed_alerts") || "[]"));
+        latestAlerts.forEach((alert) => {
+          viewedAlerts.add(alert.id);
+        });
+        localStorage.setItem("viewed_alerts", JSON.stringify(Array.from(viewedAlerts)));
+        // Trigger event to refresh count in AppShell
+        window.dispatchEvent(new CustomEvent("notificationsViewed"));
+      }
 
       // Fetch train notifications from dashboard data
       try {
@@ -161,12 +178,14 @@ export default function NotificationsDropdown({
           records.forEach((record) => {
             // Train arrived notification
             if (record.rake_placement_datetime) {
+              // Use consistent ID format with AppShell
+              const notifId = `train-arrived-${record.train_id}-${record.indent_number || ""}`;
               trainNotifications.push({
-                id: `arrived-${record.train_id}-${record.indent_number || ""}`,
+                id: notifId,
                 train_id: record.train_id,
                 indent_number: record.indent_number || null,
                 notification_type: NOTIFICATION_TYPES.TRAIN_ARRIVED,
-                message: `Train ${record.train_id}${record.indent_number ? ` (Indent: ${record.indent_number})` : ""} arrived`,
+                message: `Rake ${record.train_id}${record.indent_number ? ` (Indent: ${record.indent_number})` : ""} arrived`,
                 timestamp: record.rake_placement_datetime,
                 siding: record.siding,
               });
@@ -174,12 +193,14 @@ export default function NotificationsDropdown({
 
             // Loading started notification
             if (record.rake_loading_start_datetime) {
+              // Use consistent ID format with AppShell
+              const notifId = `loading-started-${record.train_id}-${record.indent_number || ""}`;
               trainNotifications.push({
-                id: `loading-started-${record.train_id}-${record.indent_number || ""}`,
+                id: notifId,
                 train_id: record.train_id,
                 indent_number: record.indent_number || null,
                 notification_type: NOTIFICATION_TYPES.LOADING_STARTED,
-                message: `Loading started for Train ${record.train_id}${record.indent_number ? ` (Indent: ${record.indent_number})` : ""}`,
+                message: `Loading started for Rake ${record.train_id}${record.indent_number ? ` (Indent: ${record.indent_number})` : ""}`,
                 timestamp: record.rake_loading_start_datetime,
                 siding: record.siding,
               });
@@ -187,12 +208,14 @@ export default function NotificationsDropdown({
 
             // Loading completed notification
             if (record.status === "APPROVED" && record.rake_loading_end_actual) {
+              // Use consistent ID format with AppShell
+              const notifId = `loading-completed-${record.train_id}-${record.indent_number || ""}`;
               trainNotifications.push({
-                id: `loading-completed-${record.train_id}-${record.indent_number || ""}`,
+                id: notifId,
                 train_id: record.train_id,
                 indent_number: record.indent_number || null,
                 notification_type: NOTIFICATION_TYPES.LOADING_COMPLETED,
-                message: `Loading completed for Train ${record.train_id}${record.indent_number ? ` (Indent: ${record.indent_number})` : ""}`,
+                message: `Loading completed for Rake ${record.train_id}${record.indent_number ? ` (Indent: ${record.indent_number})` : ""}`,
                 timestamp: record.rake_loading_end_actual,
                 siding: record.siding,
               });
@@ -203,7 +226,20 @@ export default function NotificationsDropdown({
           trainNotifications.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
           // Show only latest 3 notifications
-          setNotifications(trainNotifications.slice(0, 3));
+          const latestNotifications = trainNotifications.slice(0, 3);
+          setNotifications(latestNotifications);
+          
+          // Mark notifications as viewed when dropdown is open
+          if (isOpen) {
+            const viewedNotifications = new Set(JSON.parse(localStorage.getItem("viewed_notifications") || "[]"));
+            latestNotifications.forEach((notif) => {
+              viewedNotifications.add(notif.id);
+            });
+            localStorage.setItem("viewed_notifications", JSON.stringify(Array.from(viewedNotifications)));
+            
+            // Trigger event to refresh count in AppShell
+            window.dispatchEvent(new CustomEvent("notificationsViewed"));
+          }
         }
       } catch (e) {
         console.error("[NOTIFICATIONS] Failed to fetch train notifications:", e);
@@ -215,7 +251,7 @@ export default function NotificationsDropdown({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -270,109 +306,90 @@ export default function NotificationsDropdown({
         </button>
       </div>
 
-      {/* Alerts Section */}
-      <div style={styles.sectionHeader}>
-        <div style={styles.sectionTitle}>Alerts</div>
-        <div style={styles.sectionMeta}>
-          {loading ? "Loading..." : `${alerts.length} alert(s)`}
-        </div>
-      </div>
-
-      <div style={styles.list}>
-        {!loading && alerts.length === 0 ? (
-          <div style={styles.empty}>No alerts</div>
-        ) : (
-          alerts.map((a) => {
-            const c = getAlertTypeColor(a.alert_type);
-            return (
-              <div key={a.id} style={styles.item}>
-                <div style={styles.itemTop}>
-                  <div style={styles.itemName}>
-                    {a.camera_name || "-"}{" "}
-                    <span style={styles.itemSpur}>({a.spur})</span>
-                  </div>
-                  <span
-                    style={{
-                      ...styles.badge,
-                      backgroundColor: c.bg,
-                      color: c.text,
-                    }}
-                  >
-                    {getAlertTypeDisplay(a.alert_type)}
-                  </span>
-                </div>
-                <div style={styles.itemSub}>
-                  Detected:{" "}
-                  {a.detected_at ? new Date(a.detected_at).toLocaleString() : "-"}
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
-
-      {/* Notifications Section */}
+      {/* Combined Notifications Section */}
       <div style={styles.sectionHeader}>
         <div style={styles.sectionTitle}>Notifications</div>
         <div style={styles.sectionMeta}>
-          {loading ? "Loading..." : `${notifications.length} notification(s)`}
+          {loading ? "Loading..." : `${alerts.length + notifications.length} notification(s)`}
         </div>
       </div>
 
       <div style={styles.list}>
-        {!loading && notifications.length === 0 ? (
+        {!loading && alerts.length === 0 && notifications.length === 0 ? (
           <div style={styles.empty}>No notifications</div>
         ) : (
-          notifications.map((n) => {
-            const c = getNotificationTypeColor(n.notification_type);
-            return (
-              <div key={n.id} style={styles.item}>
-                <div style={styles.itemTop}>
-                  <div style={styles.itemName}>
-                    {n.train_id || "-"}
-                    {n.indent_number && (
-                      <span style={styles.itemSpur}> (Indent: {n.indent_number})</span>
-                    )}
-                    {n.siding && <span style={styles.itemSpur}> - {n.siding}</span>}
-                  </div>
-                  <span
-                    style={{
-                      ...styles.badge,
-                      backgroundColor: c.bg,
-                      color: c.text,
-                    }}
-                  >
-                    {getNotificationTypeDisplay(n.notification_type)}
-                  </span>
-                </div>
-                <div style={styles.itemSub}>
-                  {n.message || "-"} • {n.timestamp ? new Date(n.timestamp).toLocaleString() : "-"}
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
+          (() => {
+            // Combine alerts and notifications, normalize for sorting
+            const allItems = [
+              ...alerts.map((a) => ({
+                ...a,
+                type: "alert",
+                sortTime: a.detected_at ? new Date(a.detected_at).getTime() : 0,
+              })),
+              ...notifications.map((n) => ({
+                ...n,
+                type: "notification",
+                sortTime: n.timestamp ? new Date(n.timestamp).getTime() : 0,
+              })),
+            ].sort((a, b) => b.sortTime - a.sortTime); // Newest first
 
-      <div style={styles.footer}>
-        <button
-          style={styles.footerBtn}
-          onClick={() => {
-            onGoToAlertsPage("SPUR-8");
-            onClose();
-          }}
-        >
-          View SPUR-8
-        </button>
-        <button
-          style={styles.footerBtn}
-          onClick={() => {
-            onGoToAlertsPage("SPUR-9");
-            onClose();
-          }}
-        >
-          View SPUR-9
-        </button>
+            return allItems.map((item) => {
+              if (item.type === "alert") {
+                const c = getAlertTypeColor(item.alert_type);
+                return (
+                  <div key={item.id} style={styles.item}>
+                    <div style={styles.itemTop}>
+                      <div style={styles.itemName}>
+                        {item.camera_name || "-"}{" "}
+                        <span style={styles.itemSpur}>({item.spur})</span>
+                      </div>
+                      <span
+                        style={{
+                          ...styles.badge,
+                          backgroundColor: c.bg,
+                          color: c.text,
+                        }}
+                      >
+                        {getAlertTypeDisplay(item.alert_type)}
+                      </span>
+                    </div>
+                    <div style={styles.itemSub}>
+                      Detected:{" "}
+                      {item.detected_at ? new Date(item.detected_at).toLocaleString() : "-"}
+                    </div>
+                  </div>
+                );
+              } else {
+                const c = getNotificationTypeColor(item.notification_type);
+                return (
+                  <div key={item.id} style={styles.item}>
+                    <div style={styles.itemTop}>
+                      <div style={styles.itemName}>
+                        {item.train_id || "-"}
+                        {item.indent_number && (
+                          <span style={styles.itemSpur}> (Indent: {item.indent_number})</span>
+                        )}
+                        {item.siding && <span style={styles.itemSpur}> - {item.siding}</span>}
+                      </div>
+                      <span
+                        style={{
+                          ...styles.badge,
+                          backgroundColor: c.bg,
+                          color: c.text,
+                        }}
+                      >
+                        {getNotificationTypeDisplay(item.notification_type)}
+                      </span>
+                    </div>
+                    <div style={styles.itemSub}>
+                      {item.message || "-"} • {item.timestamp ? new Date(item.timestamp).toLocaleString() : "-"}
+                    </div>
+                  </div>
+                );
+              }
+            });
+          })()
+        )}
       </div>
     </div>
   );
@@ -480,24 +497,6 @@ const styles = {
     fontSize: "12px",
     color: "#374151",
     fontWeight: 600,
-  },
-  footer: {
-    padding: "10px 12px 12px",
-    display: "flex",
-    gap: "10px",
-    borderTop: "1px solid rgba(0,0,0,0.08)",
-    backgroundColor: "#FFFFFF",
-  },
-  footerBtn: {
-    flex: 1,
-    padding: "10px 12px",
-    backgroundColor: "#0B3A6E",
-    color: "#FFFFFF",
-    border: "none",
-    borderRadius: "8px",
-    fontSize: "12px",
-    fontWeight: 700,
-    cursor: "pointer",
   },
 };
 

@@ -14,6 +14,7 @@ import ReviewerVerify from "./ReviewerVerify";
 import ReviewerDispatch from "./ReviewerDispatch";
 import CameraList from "./CameraList";
 import Profile from "./Profile";
+import Settings from "./Settings";
 import Alerts from "./Alerts";
 import SessionTimeout from "./components/SessionTimeout";
 import { checkSessionOnLoad } from "./utils/sessionUtils";
@@ -159,6 +160,14 @@ function App() {
         element={
           <ProtectedRoute>
             <Profile />
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/settings" 
+        element={
+          <ProtectedRoute>
+            <Settings />
           </ProtectedRoute>
         } 
       />

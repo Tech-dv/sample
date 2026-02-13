@@ -85,11 +85,12 @@ const createTrain = async (req, res) => {
             unloaded_bag_count,
             wagon_to_be_loaded,
             loading_status,
-            rake_serial_number
+            rake_serial_number,
+            siding
           )
-          VALUES ($1, 0, 0, 0, false, $2)
+          VALUES ($1, 0, 0, NULL, false, $2, $3)
           `,
-          [i, rakeSerialNumber]
+          [i, rakeSerialNumber, siding ?? null]
         );
       }
     }
@@ -1019,10 +1020,11 @@ const { trainId } = req.params;
         wagon_destination,
         commodity,
         customer_id,
-        rake_serial_number
+        rake_serial_number,
+        siding
       )
       VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
       )
       `,
         [
@@ -1044,7 +1046,8 @@ const { trainId } = req.params;
           w.wagon_destination || null,
           w.commodity || null,
           w.customer_id || null,
-          wagonRakeSerialNumber, // ✅ FIX: Use indent-specific rake_serial_number (last column)
+          wagonRakeSerialNumber, // ✅ FIX: Use indent-specific rake_serial_number
+          header?.siding || null, // Add siding from header
         ]
       );
 
@@ -3382,9 +3385,9 @@ const { trainId } = req.params;
                   tower_number, loaded_bag_count, unloaded_bag_count,
                   loading_start_time, loading_end_time, seal_number, stoppage_time,
                   remarks, loading_status, indent_number, wagon_destination,
-                  commodity, customer_id, rake_serial_number
+                  commodity, customer_id, rake_serial_number, siding
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
                 `,
                 [
                   parentWagon.wagon_number,
@@ -3406,6 +3409,7 @@ const { trainId } = req.params;
                   parentWagon.commodity,
                   parentWagon.customer_id,
                   assignedRakeSerial, // Use new rake_serial_number
+                  parentWagon.siding || null, // Add siding from parent wagon
                 ]
               );
             }

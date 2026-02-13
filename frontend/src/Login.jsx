@@ -6,15 +6,19 @@ import { storeLoginTimestamp } from "./utils/sessionUtils";
 function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const [errorType, setErrorType] = useState(""); // "INVALID_CREDENTIALS" or "INACTIVE_ACCOUNT"
 
   const navigate = useNavigate();
 
   const handleLogin = async () => {
     setError("");
+    setErrorType("");
 
     if (!username || !password) {
       setError("Username and password required");
+      setErrorType("INVALID_CREDENTIALS");
       return;
     }
 
@@ -25,9 +29,11 @@ function Login() {
         body: JSON.stringify({ username, password }),
       });
 
-
       if (!response.ok) {
-        throw new Error("Invalid credentials");
+        const errorData = await response.json().catch(() => ({}));
+        setError(errorData.message || "Invalid username or password");
+        setErrorType(errorData.errorType || "INVALID_CREDENTIALS");
+        return;
       }
 
       const data = await response.json();
@@ -47,6 +53,7 @@ function Login() {
       navigate("/dashboard");
     } catch (err) {
       setError("Invalid username or password");
+      setErrorType("INVALID_CREDENTIALS");
     }
   };
 
@@ -68,20 +75,58 @@ function Login() {
 
         <div style={fieldGroup}>
           <label style={labelStyle}>Password</label>
+          <div style={passwordInputContainer}>
           <input
-            type="password"
+              id="password-input"
+              type={showPassword ? "text" : "password"}
             placeholder="Enter password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            style={inputStyle}
+              style={passwordInputStyle}
           />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              style={eyeButtonStyle}
+            >
+              <svg
+                style={eyeIconStyle}
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                {!showPassword ? (
+                  <>
+                    <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+                    <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+                    <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+                    <line x1="2" x2="22" y1="2" y2="22" />
+                  </>
+                ) : (
+                  <>
+                    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </>
+                )}
+              </svg>
+            </button>
+          </div>
         </div>
 
         <button onClick={handleLogin} style={buttonStyle}>
           Login
         </button>
 
-        {error && <p style={errorStyle}>{error}</p>}
+        {error && (
+          <p style={errorType === "INACTIVE_ACCOUNT" ? warningStyle : errorStyle}>
+            {error}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -134,10 +179,48 @@ const labelStyle = {
 
 const inputStyle = {
   width: "100%",
-  padding: "7px",            // slightly smaller
+  padding: "7px",
   borderRadius: "4px",
   border: "1px solid #ccc",
   outline: "none",
+  boxSizing: "border-box",
+};
+
+const passwordInputContainer = {
+  position: "relative",
+  width: "100%",
+};
+
+const passwordInputStyle = {
+  width: "100%",
+  padding: "7px 32px 7px 7px",
+  borderRadius: "4px",
+  border: "1px solid #ccc",
+  outline: "none",
+  boxSizing: "border-box",
+};
+
+const eyeButtonStyle = {
+  position: "absolute",
+  top: "50%",
+  right: "8px",
+  transform: "translateY(-50%)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  zIndex: 20,
+  padding: "4px",
+  cursor: "pointer",
+  color: "#666",
+  background: "transparent",
+  border: "none",
+  outline: "none",
+};
+
+const eyeIconStyle = {
+  width: "18px",
+  height: "18px",
+  flexShrink: 0,
 };
 
 const buttonStyle = {
@@ -154,8 +237,20 @@ const buttonStyle = {
 
 const errorStyle = {
   marginTop: "10px",
-  color: "red",
+  color: "#dc2626",
   fontSize: "13px",
+  fontWeight: "500",
+};
+
+const warningStyle = {
+  marginTop: "10px",
+  color: "#d97706",
+  fontSize: "13px",
+  fontWeight: "500",
+  backgroundColor: "#fef3c7",
+  padding: "10px",
+  borderRadius: "6px",
+  border: "1px solid #fbbf24",
 };
 
 export default Login;

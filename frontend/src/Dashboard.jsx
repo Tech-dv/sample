@@ -472,7 +472,6 @@ function Dashboard() {
                 <SummaryCard 
                   title="Active Alerts For Spur 8" 
                   value={alertCounts["SPUR-8"]} 
-                  onClick={() => navigate("/alerts/SPUR-8")}
                 />
               </div>
 
@@ -489,7 +488,6 @@ function Dashboard() {
                 <SummaryCard 
                   title="Active Alerts For Spur 9" 
                   value={alertCounts["SPUR-9"]} 
-                  onClick={() => navigate("/alerts/SPUR-9")}
                 />
               </div>
             </>
@@ -704,7 +702,7 @@ function Dashboard() {
                   </td>
 
                   <td style={styles.td}>{row.total_bags_loaded}</td>
-                  <td style={styles.td}>{row.total_bags_to_be_loaded}</td>
+                  <td style={styles.td}>{row.total_bags_to_be_loaded ?? "-"}</td>
 
                   {role !== "CUSTOMER" && (
                     <td style={{ ...styles.td, background: "#dbdbdbff", fontWeight: "700" }}>

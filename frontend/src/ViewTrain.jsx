@@ -795,7 +795,7 @@ function VideoPopup({ open, onClose, videoType, onVideoTypeChange, rawVideoSrc, 
               }}
               onClick={() => onVideoTypeChange("raw")}
             >
-              Raw
+              Analytics
             </button>
             <button
               style={{
@@ -920,7 +920,7 @@ function DownloadPopup({ open, onClose, onDownloadRaw }) {
             onMouseOver={(e) => e.target.style.backgroundColor = "#45a049"}
             onMouseOut={(e) => e.target.style.backgroundColor = "#4CAF50"}
           >
-            ⬇ Download Raw Video
+            ⬇ Download Analytics Video
           </button>
         </div>
       </div>

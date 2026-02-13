@@ -90,6 +90,9 @@ function AppShell({ children }) {
         const spur8 = await parse(spur8Res);
         const spur9 = await parse(spur9Res);
         
+        // Get viewed alerts from localStorage
+        const viewedAlerts = new Set(JSON.parse(localStorage.getItem("viewed_alerts") || "[]"));
+        
         // Build alert IDs for comparison
         const currentAlerts = new Set();
         const inactive8 = Array.isArray(spur8) ? spur8.filter((c) => !c.status) : [];
@@ -117,9 +120,14 @@ function AppShell({ children }) {
         
         previousAlertsRef.current = currentAlerts;
         
-        const cameraAlertCount = inactive8.length + inactive9.length;
+        // Count only unviewed alerts
+        const cameraAlertCount = [...inactive8, ...inactive9].filter((cam) => {
+          const alertId = `alert-${cam.id}-${cam.siding}`;
+          return !viewedAlerts.has(alertId);
+        }).length;
 
         // Fetch train notifications
+        const viewedNotifications = new Set(JSON.parse(localStorage.getItem("viewed_notifications") || "[]"));
         let trainNotificationCount = 0;
         const currentNotifications = new Set();
         
@@ -132,9 +140,13 @@ function AppShell({ children }) {
             // Track train notifications
             records.forEach((record) => {
               if (record.rake_placement_datetime) {
-                trainNotificationCount++;
                 const notifId = `train-arrived-${record.train_id}-${record.indent_number || ""}`;
                 currentNotifications.add(notifId);
+                
+                // Count only if not viewed
+                if (!viewedNotifications.has(notifId)) {
+                  trainNotificationCount++;
+                }
                 
                 if (!previousNotificationsRef.current.has(notifId)) {
                   if (mounted && previousNotificationsRef.current.size > 0) {
@@ -142,7 +154,7 @@ function AppShell({ children }) {
                       ...prev,
                       {
                         id: `toast-${Date.now()}-${Math.random()}`,
-                        message: `Train ${record.train_id}${record.indent_number ? ` (Indent: ${record.indent_number})` : ""} arrived`,
+                        message: `Rake ${record.train_id}${record.indent_number ? ` (Indent: ${record.indent_number})` : ""} arrived`,
                         type: "notification",
                       },
                     ]);
@@ -151,9 +163,13 @@ function AppShell({ children }) {
               }
               
               if (record.rake_loading_start_datetime) {
-                trainNotificationCount++;
                 const notifId = `loading-started-${record.train_id}-${record.indent_number || ""}`;
                 currentNotifications.add(notifId);
+                
+                // Count only if not viewed
+                if (!viewedNotifications.has(notifId)) {
+                  trainNotificationCount++;
+                }
                 
                 if (!previousNotificationsRef.current.has(notifId)) {
                   if (mounted && previousNotificationsRef.current.size > 0) {
@@ -161,7 +177,7 @@ function AppShell({ children }) {
                       ...prev,
                       {
                         id: `toast-${Date.now()}-${Math.random()}`,
-                        message: `Loading started for Train ${record.train_id}${record.indent_number ? ` (Indent: ${record.indent_number})` : ""}`,
+                        message: `Loading started for Rake ${record.train_id}${record.indent_number ? ` (Indent: ${record.indent_number})` : ""}`,
                         type: "notification",
                       },
                     ]);
@@ -170,9 +186,13 @@ function AppShell({ children }) {
               }
               
               if (record.status === "APPROVED" && record.rake_loading_end_actual) {
-                trainNotificationCount++;
                 const notifId = `loading-completed-${record.train_id}-${record.indent_number || ""}`;
                 currentNotifications.add(notifId);
+                
+                // Count only if not viewed
+                if (!viewedNotifications.has(notifId)) {
+                  trainNotificationCount++;
+                }
                 
                 if (!previousNotificationsRef.current.has(notifId)) {
                   if (mounted && previousNotificationsRef.current.size > 0) {
@@ -180,7 +200,7 @@ function AppShell({ children }) {
                       ...prev,
                       {
                         id: `toast-${Date.now()}-${Math.random()}`,
-                        message: `Loading completed for Train ${record.train_id}${record.indent_number ? ` (Indent: ${record.indent_number})` : ""}`,
+                        message: `Loading completed for Rake ${record.train_id}${record.indent_number ? ` (Indent: ${record.indent_number})` : ""}`,
                         type: "notification",
                       },
                     ]);
@@ -206,9 +226,19 @@ function AppShell({ children }) {
     if (role) {
       fetchCount();
       const interval = setInterval(fetchCount, 10000);
+      
+      // Listen for notifications viewed event to refresh count immediately
+      const handleNotificationsViewed = () => {
+        if (mounted) {
+          fetchCount();
+        }
+      };
+      window.addEventListener("notificationsViewed", handleNotificationsViewed);
+      
       return () => {
         mounted = false;
         clearInterval(interval);
+        window.removeEventListener("notificationsViewed", handleNotificationsViewed);
       };
     }
     return () => {
@@ -359,12 +389,20 @@ function AppShell({ children }) {
             />
 
             {role === "REVIEWER" && (
-              <NavItem
-                to="/task-view"
-                label="Task View"
-                location={location}
-                onClick={() => setOpen(false)}
-              />
+              <>
+                <NavItem
+                  to="/task-view"
+                  label="Task View"
+                  location={location}
+                  onClick={() => setOpen(false)}
+                />
+                <NavItem
+                  to="/settings"
+                  label="Settings"
+                  location={location}
+                  onClick={() => setOpen(false)}
+                />
+              </>
             )}
 
             {(role === "ADMIN" || role === "SUPER_ADMIN") && (

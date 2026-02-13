@@ -53,6 +53,7 @@ export default function ReviewerDispatch() {
   });
 
   const [activities, setActivities] = useState([]);
+  const [rakeTypes, setRakeTypes] = useState([]);
 
 
   /* ================= HELPER: Convert datetime to datetime-local format ================= */
@@ -267,6 +268,37 @@ export default function ReviewerDispatch() {
       clearInterval(interval);
     };
   }, [trainId, indentNumber, role, reviewerUsername]); // ✅ Dependencies ensure fetchActivityTimeline has latest values
+
+  // Fetch rake types from backend
+  useEffect(() => {
+    const fetchRakeTypes = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/dropdown-options?type=rake_type`, {
+          headers: {
+            "x-user-role": role || "",
+          },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setRakeTypes(data.map(item => ({
+            value: item.option_value,
+            label: item.option_value,
+          })));
+        }
+      } catch (err) {
+        console.error("Failed to fetch rake types:", err);
+        // Fallback to default values if fetch fails
+        setRakeTypes([
+          { value: "Full rake", label: "Full rake" },
+          { value: "Part rake", label: "Part rake" },
+          { value: "Combo rake", label: "Combo rake" },
+        ]);
+      }
+    };
+    if (role) {
+      fetchRakeTypes();
+    }
+  }, [role]);
 
   /* ================= UTILS ================= */
   const getChangedFields = () => {
@@ -495,9 +527,7 @@ export default function ReviewerDispatch() {
                 required
                 selectOptions={[
                   { value: "", label: "Select" },
-                  { value: "Full rake", label: "Full rake" },
-                  { value: "Part rake", label: "Part rake" },
-                  { value: "Combo rake", label: "Combo rake" },
+                  ...rakeTypes,
                 ]}
               />
 

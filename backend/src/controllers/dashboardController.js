@@ -95,7 +95,7 @@ const getDashboardData = async (req, res) => {
               LIMIT 1
             ) AS rake_loading_end_actual,
             COALESCE(SUM(w.loaded_bag_count), 0) AS total_bags_loaded,
-            COALESCE(SUM(w.wagon_to_be_loaded), 0) AS total_bags_to_be_loaded
+            SUM(w.wagon_to_be_loaded) AS total_bags_to_be_loaded
           FROM dashboard_records d
           JOIN customers c ON c.id = d.customer_id
         LEFT JOIN wagon_records w ON w.rake_serial_number = d.rake_serial_number
@@ -129,9 +129,8 @@ const getDashboardData = async (req, res) => {
         `;
       tableParams = [customerId];
     } else if (role === "SUPER_ADMIN") {
-      // SUPER_ADMIN: show only
-      // - APPROVED rows (rake loading completed)
-      // - LOADING_IN_PROGRESS rows that were revoked by this SUPER_ADMIN
+      // SUPER_ADMIN: show all non-cancelled rows (same as ADMIN/REVIEWER)
+      // Mark rows that were revoked by ANY SUPER_ADMIN so frontend can disable Edit while still allowing View
       tableQuery = `
           SELECT
             ${trainIdSelect},
@@ -173,27 +172,23 @@ const getDashboardData = async (req, res) => {
               LIMIT 1
             ) AS rake_loading_end_actual,
             COALESCE(SUM(w.loaded_bag_count), 0) AS total_bags_loaded,
-            COALESCE(SUM(w.wagon_to_be_loaded), 0) AS total_bags_to_be_loaded
+            SUM(w.wagon_to_be_loaded) AS total_bags_to_be_loaded,
+            EXISTS (
+              SELECT 1
+              FROM activity_timeline a
+            WHERE a.rake_serial_number = d.rake_serial_number
+                AND (
+                  (a.indent_number IS NULL AND (d.indent_number IS NULL OR d.indent_number = ''))
+                  OR a.indent_number = d.indent_number
+                )
+                AND a.activity_type = 'REVOKED_BY_SUPER_ADMIN'
+            ) AS revoked_by_superadmin
           FROM dashboard_records d
           LEFT JOIN customers c ON c.id = d.customer_id
         LEFT JOIN wagon_records w ON w.rake_serial_number = d.rake_serial_number
             AND (d.single_indent = true OR w.indent_number = d.indent_number)
           WHERE 
-            (d.status = 'APPROVED'
-            OR (
-              d.status = 'LOADING_IN_PROGRESS'
-              AND EXISTS (
-                SELECT 1 
-                FROM activity_timeline a
-                WHERE a.rake_serial_number = d.rake_serial_number
-                  AND (
-                    (a.indent_number IS NULL AND (d.indent_number IS NULL OR d.indent_number = ''))
-                    OR a.indent_number = d.indent_number
-                  )
-                  AND a.activity_type = 'REVOKED_BY_SUPER_ADMIN'
-                  AND a.username = $1
-              )
-            ))
+            d.status != 'CANCELLED'
             -- Exclude parent records when child records (with sequential numbers) exist
             AND NOT (
               -- Check if this is a parent record (no sequential number in rake_serial_number)
@@ -220,7 +215,7 @@ const getDashboardData = async (req, res) => {
             d.single_indent
           ORDER BY d.created_time DESC
         `;
-      tableParams = [username || ""];
+      tableParams = [];
     } else {
       // ADMIN / REVIEWER:
       // Show all non-cancelled rows, but mark rows that were revoked by ANY SUPER_ADMIN
@@ -266,7 +261,7 @@ const getDashboardData = async (req, res) => {
               LIMIT 1
             ) AS rake_loading_end_actual,
             COALESCE(SUM(w.loaded_bag_count), 0) AS total_bags_loaded,
-            COALESCE(SUM(w.wagon_to_be_loaded), 0) AS total_bags_to_be_loaded,
+            SUM(w.wagon_to_be_loaded) AS total_bags_to_be_loaded,
             EXISTS (
               SELECT 1
               FROM activity_timeline a

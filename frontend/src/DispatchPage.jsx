@@ -64,6 +64,7 @@ export default function DispatchPage() {
 
 
   const [activities, setActivities] = useState([]);
+  const [rakeTypes, setRakeTypes] = useState([]);
   const [isApproved, setIsApproved] = useState(false);
   const [hasReviewerEdits, setHasReviewerEdits] = useState(false);
 
@@ -396,6 +397,35 @@ export default function DispatchPage() {
       fetchWagonData();
     }, 1000);
   }, [trainId, indentNumber]);
+
+  // Fetch rake types from backend
+  useEffect(() => {
+    const fetchRakeTypes = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/dropdown-options?type=rake_type`, {
+          headers: {
+            "x-user-role": role || "",
+          },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setRakeTypes(data.map(item => ({
+            value: item.option_value,
+            label: item.option_value,
+          })));
+        }
+      } catch (err) {
+        console.error("Failed to fetch rake types:", err);
+        // Fallback to default values if fetch fails
+        setRakeTypes([
+          { value: "Full rake", label: "Full rake" },
+          { value: "Part rake", label: "Part rake" },
+          { value: "Combo rake", label: "Combo rake" },
+        ]);
+      }
+    };
+    fetchRakeTypes();
+  }, [role]);
 
   /* ================= INPUT HANDLERS ================= */
   const handleIndentWagonChange = (v) => {
@@ -901,9 +931,7 @@ export default function DispatchPage() {
             required
             selectOptions={[
               { value: "", label: "Select" },
-              { value: "Full rake", label: "Full rake" },
-              { value: "Part rake", label: "Part rake" },
-              { value: "Combo rake", label: "Combo rake" },
+              ...rakeTypes,
             ]}
           />
 
@@ -1032,10 +1060,10 @@ export default function DispatchPage() {
                       fontSize: "14px",
                       fontWeight: "600",
                       transition: "background-color 0.2s",
-                    }}
+                                  }}
                     onMouseOver={(e) => e.target.style.backgroundColor = "#45a049"}
                     onMouseOut={(e) => e.target.style.backgroundColor = "#4CAF50"}
-                  >
+                                >
                     Download All Reviewer Changes (Excel)
                                 </button>
                 </div>
