@@ -863,6 +863,13 @@ function ReviewerVerify() {
 
     // If multiple indent mode, check if already split or question answered
     if (!editOptions.singleIndent) {
+      // ✅ FIX: Skip popup for child nodes (when indentNumber is present in URL)
+      if (indentNumber) {
+        console.log("Child node detected - skipping popup and proceeding directly");
+        navigate(`/reviewer/train/${encodeURIComponent(trainId)}/dispatch${indentNumber ? `?indent_number=${encodeURIComponent(indentNumber)}` : ''}`);
+        return;
+      }
+      
       // ✅ FIX: If question has already been answered (Yes or No), skip popup
       if (serialQuestionAnswered) {
         // If answered "Yes" (hasSequentialSerials = true), check for sequential train IDs
@@ -878,7 +885,7 @@ function ReviewerVerify() {
         }
       }
 
-      // Question not answered yet - show popup
+      // Question not answered yet - show popup (only for parent nodes)
       setShowMultipleRakePopup(true);
       return;
     }

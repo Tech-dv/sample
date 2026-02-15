@@ -17,7 +17,7 @@ function Profile() {
           >
             Back to Dashboard
           </button>
-          <h2 style={styles.title}>My Profile</h2>
+        <h2 style={styles.title}>My Profile</h2>
         </div>
 
         <div style={styles.row}>
@@ -26,10 +26,10 @@ function Profile() {
             <div style={styles.value}>{username || "-"}</div>
           </div>
 
-          <div style={styles.card}>
+            <div style={styles.card}>
             <div style={styles.label}>Role</div>
             <div style={styles.value}>{role || "-"}</div>
-          </div>
+            </div>
         </div>
       </div>
     </AppShell>

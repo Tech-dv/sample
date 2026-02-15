@@ -390,12 +390,12 @@ function AppShell({ children }) {
 
             {role === "REVIEWER" && (
               <>
-                <NavItem
-                  to="/task-view"
-                  label="Task View"
-                  location={location}
-                  onClick={() => setOpen(false)}
-                />
+              <NavItem
+                to="/task-view"
+                label="Task View"
+                location={location}
+                onClick={() => setOpen(false)}
+              />
                 <NavItem
                   to="/settings"
                   label="Settings"

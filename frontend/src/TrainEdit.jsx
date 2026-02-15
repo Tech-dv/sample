@@ -3,7 +3,6 @@ import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import * as XLSX from "xlsx";
 import AppShell from "./AppShell";
 import { API_BASE } from "./api";
-import { useAutoSave, loadSavedData, clearSavedData } from "./hooks/useAutoSave";
 import DraftSavePopup from "./components/DraftSavePopup";
 import MultipleRakeSerialPopup from "./components/MultipleRakeSerialPopup";
 import WarningPopup from "./components/WarningPopup";
@@ -179,13 +178,11 @@ function TrainEdit() {
   /* ================= ORIGINAL STATE (for change detection) ================= */
   const [originalState, setOriginalState] = useState(null);
 
-  /* ================= AUTO-SAVE FORM DATA ================= */
-  const autoSaveKey = `train-edit-form-${trainId}${indentNumber ? `-${indentNumber}` : ''}`;
-
   // Extract only user-editable fields (exclude auto-populated fields)
+  // Used for change detection (originalState comparison)
   const getUserEditableFields = (wagons) => {
     return wagons.map(w => {
-      // Only save user-editable fields, exclude auto-populated ones
+      // Only user-editable fields, exclude auto-populated ones
       const editableFields = {
         wagon_number: w.wagon_number || "",
         wagon_type: w.wagon_type || "",
@@ -206,14 +203,6 @@ function TrainEdit() {
       return editableFields;
     });
   };
-
-  // Auto-save only user-editable fields (not auto-populated ones)
-  const autoSaveData = {
-    trainHeader,
-    wagons: getUserEditableFields(wagons),
-    editOptions,
-  };
-  useAutoSave(autoSaveKey, autoSaveData, 1500); // Save after 1.5 seconds of inactivity
 
   function createEmptyWagon(index) {
     return {
@@ -252,9 +241,6 @@ function TrainEdit() {
   useEffect(() => {
     const loadTrainData = async () => {
       try {
-        // Load saved form data from localStorage
-        const savedFormData = loadSavedData(autoSaveKey);
-
         // Build URL with indent_number query parameter if provided
         const url = indentNumber
           ? `${API_BASE}/train/${encodeURIComponent(trainId)}/edit?indent_number=${encodeURIComponent(indentNumber)}`
@@ -354,8 +340,9 @@ function TrainEdit() {
               : null;
             const loadedBagCount = Number(w.loaded_bag_count) || 0;
 
+            // If wagon_to_be_loaded is null (not filled), status must be false (can't compare null)
             const calculatedStatus = wagonToBeLoaded != null
-              ? (loadedBagCount >= wagonToBeLoaded && loadedBagCount > 0)
+              ? (loadedBagCount >= wagonToBeLoaded)
               : false;
 
             // If DB status is true but calculated is false, it was manually set
@@ -468,88 +455,15 @@ function TrainEdit() {
           apiWagons = emptyWagons;
         }
 
-        // Merge saved user-edited fields with fresh API data
-        // Always use fresh API data for auto-populated fields
-        const hasMeaningfulSavedData = savedFormData &&
-          savedFormData.wagons &&
-          savedFormData.wagons.length > 0 &&
-          savedFormData.wagons.some(w =>
-            w.wagon_number || w.wagon_type || w.cc_weight || w.commodity || w.remarks
-          );
-
-        if (hasMeaningfulSavedData && savedFormData.wagons.length === apiWagons.length) {
-          console.log("Found saved form data from previous session, merging user-edited fields with fresh API data");
-
-          // Use saved header if available
-          const finalHeader = savedFormData.trainHeader || apiHeader;
-          setTrainHeader(finalHeader);
-
-          // Merge saved user-edited fields with fresh API data
-          // Always use fresh API data for auto-populated fields (loaded_bag_count, unloaded_bag_count, loading times, etc.)
-          const mergedWagons = apiWagons.map((apiWagon, index) => {
-            const savedWagon = savedFormData.wagons[index];
-            if (!savedWagon) return apiWagon;
-
-            // Merge: Use saved values for user-editable fields, API values for auto-populated fields
-            return {
-              ...apiWagon, // Start with fresh API data (includes auto-populated fields)
-              // Override only user-editable fields from saved data
-              wagon_number: savedWagon.wagon_number !== undefined ? savedWagon.wagon_number : apiWagon.wagon_number,
-              wagon_type: savedWagon.wagon_type !== undefined ? savedWagon.wagon_type : apiWagon.wagon_type,
-              cc_weight: savedWagon.cc_weight !== undefined ? savedWagon.cc_weight : apiWagon.cc_weight,
-              sick_box: savedWagon.sick_box !== undefined ? savedWagon.sick_box : apiWagon.sick_box,
-              wagon_to_be_loaded: savedWagon.wagon_to_be_loaded !== undefined ? savedWagon.wagon_to_be_loaded : apiWagon.wagon_to_be_loaded,
-              commodity: savedWagon.commodity !== undefined ? savedWagon.commodity : apiWagon.commodity,
-              seal_numbers: savedWagon.seal_numbers && savedWagon.seal_numbers.length > 0 && savedWagon.seal_numbers[0] !== ""
-                ? savedWagon.seal_numbers
-                : apiWagon.seal_numbers,
-              // Preserve confirmed_seal_indices from saved data, or use API data, or mark all non-empty as confirmed
-              confirmed_seal_indices: savedWagon.confirmed_seal_indices !== undefined && savedWagon.confirmed_seal_indices.length > 0
-                ? savedWagon.confirmed_seal_indices
-                : (apiWagon.confirmed_seal_indices && apiWagon.confirmed_seal_indices.length > 0
-                  ? apiWagon.confirmed_seal_indices
-                  : (() => {
-                    const finalSealNumbers = savedWagon.seal_numbers && savedWagon.seal_numbers.length > 0 && savedWagon.seal_numbers[0] !== ""
-                      ? savedWagon.seal_numbers
-                      : apiWagon.seal_numbers;
-                    // Mark all non-empty seal numbers as confirmed
-                    return finalSealNumbers.map((_, idx) => idx).filter(idx => finalSealNumbers[idx] && finalSealNumbers[idx].trim() !== "");
-                  })()),
-              stoppage_time: savedWagon.stoppage_time !== undefined ? savedWagon.stoppage_time : apiWagon.stoppage_time,
-              remarks: savedWagon.remarks !== undefined ? savedWagon.remarks : apiWagon.remarks,
-              // Multiple indent mode fields
-              indent_number: savedWagon.indent_number !== undefined ? savedWagon.indent_number : apiWagon.indent_number,
-              wagon_destination: savedWagon.wagon_destination !== undefined ? savedWagon.wagon_destination : apiWagon.wagon_destination,
-              customer_id: savedWagon.customer_id !== undefined ? savedWagon.customer_id : apiWagon.customer_id,
-              // Keep API values for auto-populated fields (loaded_bag_count, unloaded_bag_count, loading times, loading_status)
-              // These are already in apiWagon from the spread above
-            };
-          });
-
-          setWagons(mergedWagons);
-          // Set original state after merging
-          setOriginalState({
-            trainHeader: finalHeader,
-            wagons: getUserEditableFields(mergedWagons),
-          });
-        } else {
-          // No meaningful saved data or wagon count mismatch - use fresh API data
-          console.log("Using fresh data from database");
-          setTrainHeader(apiHeader);
-          setWagons(apiWagons);
-          
-          // Set original state after loading fresh data
-          setOriginalState({
-            trainHeader: apiHeader,
-            wagons: getUserEditableFields(apiWagons),
-          });
-
-          // Clear any stale autosave data
-          if (savedFormData) {
-            console.log("Clearing stale autosave data");
-            clearSavedData(autoSaveKey);
-          }
-        }
+        // Always use fresh API data (no auto-save/restore)
+        setTrainHeader(apiHeader);
+        setWagons(apiWagons);
+        
+        // Set original state after loading fresh data
+        setOriginalState({
+          trainHeader: apiHeader,
+          wagons: getUserEditableFields(apiWagons),
+        });
       } catch (err) {
         console.error("Failed to load train data", err);
       }
@@ -589,24 +503,32 @@ function TrainEdit() {
     prevBagCountsRef.current = currentBagCountsKey;
     
     const updated = wagons.map(w => {
-      const isManuallyToggled = manuallyToggledWagons.has(w.tower_number);
-      
-      // Skip if manually toggled - preserve user's choice
-      if (isManuallyToggled) {
-        return w;
-      }
-
       // Calculate status based on bag counts ONLY
-      // Status is true when loaded_bag_count >= wagon_to_be_loaded AND loaded_bag_count > 0
+      // Status is true when loaded_bag_count >= wagon_to_be_loaded
+      // If wagon_to_be_loaded is null (not filled), status is false
       const wagonToBeLoadedValue = w.wagon_to_be_loaded != null ? String(w.wagon_to_be_loaded) : "";
       const wagonToBeLoaded = wagonToBeLoadedValue && wagonToBeLoadedValue.trim() !== ""
         ? Number(wagonToBeLoadedValue)
         : null;
       const loadedBagCount = Number(w.loaded_bag_count) || 0;
       
-      const calculatedStatus = wagonToBeLoaded != null
-        ? (loadedBagCount >= wagonToBeLoaded && loadedBagCount > 0)
-        : false;
+      // If wagon_to_be_loaded is null, status must be false (can't compare null)
+      // This overrides any manual toggle - null means incomplete
+      if (wagonToBeLoaded == null) {
+        if (w.loading_status !== false) {
+          return { ...w, loading_status: false };
+        }
+        return w;
+      }
+      
+      const isManuallyToggled = manuallyToggledWagons.has(w.tower_number);
+      
+      // Skip if manually toggled - preserve user's choice (only when wagon_to_be_loaded has a value)
+      if (isManuallyToggled) {
+        return w;
+      }
+
+      const calculatedStatus = loadedBagCount >= wagonToBeLoaded;
 
       // Only update if status changed
       if (w.loading_status !== calculatedStatus) {
@@ -620,6 +542,25 @@ function TrainEdit() {
     const hasChanges = updated.some((w, i) => w.loading_status !== wagons[i].loading_status);
     if (hasChanges) {
       setWagons(updated);
+      
+      // Also remove wagons with null wagon_to_be_loaded from manually toggled set
+      const wagonsWithNullTarget = updated.filter(w => {
+        const wagonToBeLoadedValue = w.wagon_to_be_loaded != null ? String(w.wagon_to_be_loaded) : "";
+        const wagonToBeLoaded = wagonToBeLoadedValue && wagonToBeLoadedValue.trim() !== ""
+          ? Number(wagonToBeLoadedValue)
+          : null;
+        return wagonToBeLoaded == null;
+      });
+      
+      if (wagonsWithNullTarget.length > 0) {
+        setManuallyToggledWagons(prev => {
+          const newSet = new Set(prev);
+          wagonsWithNullTarget.forEach(w => {
+            newSet.delete(w.tower_number);
+          });
+          return newSet;
+        });
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wagons, manuallyToggledWagons]); // Watch wagons array, but only update status when bag counts change (checked inside)
@@ -662,12 +603,13 @@ function TrainEdit() {
           : null;
         const loadedBagCount = Number(wagon.loaded_bag_count) || 0;
         
+        // If wagon_to_be_loaded is null (not filled), status must be false (can't compare null)
         if (wagonToBeLoaded == null) {
-          return false; // No target set, status should be false
+          return false;
         }
         
-        // Status is true if loaded_bag_count >= wagon_to_be_loaded AND loaded_bag_count > 0
-        return loadedBagCount >= wagonToBeLoaded && loadedBagCount > 0;
+        // Status is true if loaded_bag_count >= wagon_to_be_loaded
+        return loadedBagCount >= wagonToBeLoaded;
       };
 
       // always update current row
@@ -683,14 +625,29 @@ function TrainEdit() {
         }
 
         // ✅ FIX: Auto-update loading_status when wagon_to_be_loaded changes
-        // Only update if wagon was NOT manually toggled
-        // Status should ONLY update based on manual toggle or when loaded_bag_count equals wagon_to_be_loaded
         if (field === "wagon_to_be_loaded") {
-          const isManuallyToggled = manuallyToggledWagons.has(w.tower_number);
-          if (!isManuallyToggled) {
-            // Recalculate status based on new wagon_to_be_loaded value and current loaded_bag_count
-            const calculatedStatus = calculateLoadingStatus(updatedWagon);
-            updatedWagon.loading_status = calculatedStatus;
+          // Check if the new value is null or empty
+          const newValue = value != null ? String(value).trim() : "";
+          const isNull = newValue === "";
+          
+          if (isNull) {
+            // If wagon_to_be_loaded becomes null, force status to false
+            // and remove from manually toggled set (null means incomplete)
+            updatedWagon.loading_status = false;
+            setManuallyToggledWagons(prev => {
+              const newSet = new Set(prev);
+              newSet.delete(w.tower_number);
+              return newSet;
+            });
+          } else {
+            // If wagon_to_be_loaded has a value, recalculate status
+            // Only update if wagon was NOT manually toggled
+            const isManuallyToggled = manuallyToggledWagons.has(w.tower_number);
+            if (!isManuallyToggled) {
+              // Recalculate status based on new wagon_to_be_loaded value and current loaded_bag_count
+              const calculatedStatus = calculateLoadingStatus(updatedWagon);
+              updatedWagon.loading_status = calculatedStatus;
+            }
           }
         }
         // ✅ FIX: Do NOT update loading_status when loading_end_time or loading_start_time changes
@@ -718,14 +675,29 @@ function TrainEdit() {
         updatedWagon[field] = value;
         
         // ✅ FIX: Auto-update loading_status when wagon_to_be_loaded cascades
-        // Only update if wagon was NOT manually toggled
-        // Status should ONLY update based on manual toggle or when loaded_bag_count equals wagon_to_be_loaded
         if (field === "wagon_to_be_loaded") {
-          const isManuallyToggled = manuallyToggledWagons.has(w.tower_number);
-          if (!isManuallyToggled) {
-            // Recalculate status based on new wagon_to_be_loaded value and current loaded_bag_count
-            const calculatedStatus = calculateLoadingStatus(updatedWagon);
-            updatedWagon.loading_status = calculatedStatus;
+          // Check if the new value is null or empty
+          const newValue = value != null ? String(value).trim() : "";
+          const isNull = newValue === "";
+          
+          if (isNull) {
+            // If wagon_to_be_loaded becomes null, force status to false
+            // and remove from manually toggled set (null means incomplete)
+            updatedWagon.loading_status = false;
+            setManuallyToggledWagons(prev => {
+              const newSet = new Set(prev);
+              newSet.delete(w.tower_number);
+              return newSet;
+            });
+          } else {
+            // If wagon_to_be_loaded has a value, recalculate status
+            // Only update if wagon was NOT manually toggled
+            const isManuallyToggled = manuallyToggledWagons.has(w.tower_number);
+            if (!isManuallyToggled) {
+              // Recalculate status based on new wagon_to_be_loaded value and current loaded_bag_count
+              const calculatedStatus = calculateLoadingStatus(updatedWagon);
+              updatedWagon.loading_status = calculatedStatus;
+            }
           }
         }
         // ✅ FIX: Do NOT update loading_status when loading_end_time or loading_start_time changes
@@ -914,7 +886,7 @@ function TrainEdit() {
         : null;
       const loadedBagCount = Number(w.loaded_bag_count) || 0;
       const calculatedStatus = wagonToBeLoaded != null
-        ? (loadedBagCount >= wagonToBeLoaded && loadedBagCount > 0)
+        ? (loadedBagCount >= wagonToBeLoaded)
         : false;
 
       // If current status is true but calculated is false, it was manually set
@@ -952,7 +924,7 @@ function TrainEdit() {
         : null;
       const loadedBagCount = Number(w.loaded_bag_count) || 0;
       const calculatedStatus = wagonToBeLoaded != null
-        ? (loadedBagCount >= wagonToBeLoaded && loadedBagCount > 0)
+        ? (loadedBagCount >= wagonToBeLoaded)
         : false;
 
       // If current status is true but calculated is false, it was manually set
@@ -1083,9 +1055,6 @@ function TrainEdit() {
       const responseData = await res.json();
 
       setIsSaved(true);
-
-      // Clear auto-saved data on successful save
-      clearSavedData(autoSaveKey);
       
       // Update original state after successful save
       setOriginalState({
@@ -1339,12 +1308,21 @@ function TrainEdit() {
     const urlMatch = currentUrl.match(/\/train\/([^/]+)\/edit/);
     const currentTrainId = urlMatch ? decodeURIComponent(urlMatch[1]) : trainId;
 
-    // ✅ FIX: Always show popup in multiple indent mode when clicking Proceed
-    // This ensures user can choose whether to split rake serial numbers or not
-    if (!editOptions.singleIndent) {
-      // Always show the popup to ask if multiple rake serial numbers are needed
+    // ✅ FIX: Show popup in multiple indent mode when clicking Proceed, but skip for child nodes
+    // Child nodes are identified by the presence of indentNumber in the URL
+    // This ensures user can choose whether to split rake serial numbers or not (only for parent nodes)
+    if (!editOptions.singleIndent && !indentNumber) {
+      // Only show the popup for parent nodes (when indentNumber is not in URL)
       console.log("Multiple indent mode detected - showing popup to ask about multiple rake serial numbers");
       setShowMultipleRakePopup(true);
+      return;
+    }
+    
+    // For child nodes (indentNumber present), skip popup and proceed directly
+    if (!editOptions.singleIndent && indentNumber) {
+      console.log("Child node detected - skipping popup and proceeding directly");
+      const dispatchUrl = buildDispatchUrl(currentTrainId, indentNumber, isWagonDetailsComplete);
+      navigate(dispatchUrl);
       return;
     }
 

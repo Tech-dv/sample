@@ -419,6 +419,54 @@ export default function ReviewerDispatch() {
       // ✅ FIX: Refresh activity timeline after submission
       fetchActivityTimeline();
 
+      // ✅ FIX: Auto-download Excel file after successful submit
+      try {
+        const role = localStorage.getItem("role");
+        const url = `${API_BASE}/train/${encodeURIComponent(trainId)}/export-all-reviewer-changes`;
+        
+        const response = await fetch(url, {
+          headers: {
+            "x-user-role": role || "REVIEWER",
+          },
+        });
+
+        if (response.ok) {
+          // Get the blob from response
+          const blob = await response.blob();
+          
+          // Extract filename from Content-Disposition header, or use default
+          const contentDisposition = response.headers.get('Content-Disposition');
+          let filename = `${trainId}_changes.xlsx`;
+          if (contentDisposition) {
+            const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+            if (filenameMatch) {
+              filename = filenameMatch[1];
+            }
+          }
+          
+          // Create a temporary URL for the blob
+          const blobUrl = window.URL.createObjectURL(blob);
+          
+          // Create a temporary anchor element and trigger download
+          const link = document.createElement('a');
+          link.href = blobUrl;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          
+          // Clean up
+          document.body.removeChild(link);
+          window.URL.revokeObjectURL(blobUrl);
+        } else {
+          // If no changes found, that's okay - just continue
+          const errorData = await response.json().catch(() => ({ message: "No changes to export" }));
+          console.log("Excel export:", errorData.message || "No changes found");
+        }
+      } catch (err) {
+        // Don't block success if Excel download fails
+        console.error("Excel download error:", err);
+      }
+
       setShowSuccess(true);
     } else {
       // ✅ FIX: Show actual error message from backend
@@ -570,8 +618,23 @@ export default function ReviewerDispatch() {
                     <div style={activityTimeline.date}>{dateGroup.date}</div>
                     <div style={activityTimeline.activitiesList}>
                       {dateGroup.activities.map((activity, actIndex) => {
-                        // Special handling for REVIEWER_TRAIN_EDITED with change details
+                        // ✅ FIX: Hide REVIEWER_EDITED activities (these are rake/dispatch changes, shown only in Excel)
+                        if (activity.activity_type === 'REVIEWER_EDITED') {
+                          return null; // Hide rake/dispatch changes from timeline
+                        }
+
+                        // ✅ FIX: Only show REVIEWER_TRAIN_EDITED if it has wagon changes
+                        // Rake changes are only shown in Excel, not in activity timeline
                         if (activity.activity_type === 'REVIEWER_TRAIN_EDITED' && activity.changeDetails) {
+                          // Check if there are wagon changes (not just rake changes)
+                          const hasWagonChanges = activity.changeDetails.wagonChanges && 
+                                                  activity.changeDetails.wagonChanges.length > 0;
+                          
+                          // Only show if there are wagon changes
+                          if (!hasWagonChanges) {
+                            return null; // Hide activities that only have rake changes
+                          }
+
                           const formatTime = (timestamp) => {
                             if (!timestamp) return '';
                             const date = new Date(timestamp);
@@ -585,67 +648,80 @@ export default function ReviewerDispatch() {
                               hour12: false
                             });
                           };
-                          
-                          const handleDownload = async () => {
-                            try {
-                              const role = localStorage.getItem("role");
-                              const url = `${API_BASE}/train/${encodeURIComponent(trainId)}/activity-timeline/${activity.id}/export-changes`;
-                              
-                              const response = await fetch(url, {
-                                headers: {
-                                  "x-user-role": role || "REVIEWER",
-                                },
-                              });
-
-                              if (!response.ok) {
-                                const errorData = await response.json().catch(() => ({ message: "Download failed" }));
-                                alert(errorData.message || "Failed to download Excel file");
-                                return;
-                              }
-
-                              // Get the blob from response
-                              const blob = await response.blob();
-                              
-                              // Extract filename from Content-Disposition header, or use default
-                              const contentDisposition = response.headers.get('Content-Disposition');
-                              let filename = `${trainId}_changes.xlsx`;
-                              if (contentDisposition) {
-                                const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
-                                if (filenameMatch) {
-                                  filename = filenameMatch[1];
-                                }
-                              }
-                              
-                              // Create a temporary URL for the blob
-                              const blobUrl = window.URL.createObjectURL(blob);
-                              
-                              // Create a temporary anchor element and trigger download
-                              const link = document.createElement('a');
-                              link.href = blobUrl;
-                              link.download = filename;
-                              document.body.appendChild(link);
-                              link.click();
-                              
-                              // Clean up
-                              document.body.removeChild(link);
-                              window.URL.revokeObjectURL(blobUrl);
-                            } catch (err) {
-                              console.error("Download error:", err);
-                              alert("Failed to download Excel file. Please try again.");
-                            }
-                          };
 
                           return (
-                        <div key={actIndex} style={activityTimeline.activityItem}>
-                          <span style={activityTimeline.bullet}>•</span>
+                            <div key={actIndex} style={activityTimeline.activityItem}>
+                              <span style={activityTimeline.bullet}>•</span>
                               <div style={{ flex: 1 }}>
                                 <div style={activityTimeline.text}>
                                   Reviewer made changes in wagon: {formatTime(activity.timestamp)}
-                        </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+                        
+                        const formattedText = formatActivityText(activity.text);
+                        const isReviewedAndApproved = activity.text && activity.text.includes('reviewed and approved');
+                        
+                        return (
+                          <div key={actIndex}>
+                            <div style={activityTimeline.activityItem}>
+                              <span style={activityTimeline.bullet}>•</span>
+                              <span style={activityTimeline.text}>{formattedText}</span>
+                            </div>
+                            {isReviewedAndApproved && (
+                              <div style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
                                 <button
-                                  onClick={handleDownload}
+                                  onClick={async () => {
+                                    try {
+                                      const role = localStorage.getItem("role");
+                                      const url = `${API_BASE}/train/${encodeURIComponent(trainId)}/export-all-reviewer-changes`;
+                                      
+                                      const response = await fetch(url, {
+                                        headers: {
+                                          "x-user-role": role || "REVIEWER",
+                                        },
+                                      });
+
+                                      if (!response.ok) {
+                                        const errorData = await response.json().catch(() => ({ message: "Download failed" }));
+                                        alert(errorData.message || "Failed to download Excel file");
+                                        return;
+                                      }
+
+                                      // Get the blob from response
+                                      const blob = await response.blob();
+                                      
+                                      // Extract filename from Content-Disposition header, or use default
+                                      const contentDisposition = response.headers.get('Content-Disposition');
+                                      let filename = `${trainId}_changes.xlsx`;
+                                      if (contentDisposition) {
+                                        const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+                                        if (filenameMatch) {
+                                          filename = filenameMatch[1];
+                                        }
+                                      }
+                                      
+                                      // Create a temporary URL for the blob
+                                      const blobUrl = window.URL.createObjectURL(blob);
+                                      
+                                      // Create a temporary anchor element and trigger download
+                                      const link = document.createElement('a');
+                                      link.href = blobUrl;
+                                      link.download = filename;
+                                      document.body.appendChild(link);
+                                      link.click();
+                                      
+                                      // Clean up
+                                      document.body.removeChild(link);
+                                      window.URL.revokeObjectURL(blobUrl);
+                                    } catch (err) {
+                                      console.error("Download error:", err);
+                                      alert("Failed to download Excel file. Please try again.");
+                                    }
+                                  }}
                                   style={{
-                                    marginTop: '8px',
                                     padding: '6px 12px',
                                     backgroundColor: '#4CAF50',
                                     color: 'white',
@@ -658,18 +734,10 @@ export default function ReviewerDispatch() {
                                   onMouseOver={(e) => e.target.style.backgroundColor = '#45a049'}
                                   onMouseOut={(e) => e.target.style.backgroundColor = '#4CAF50'}
                                 >
-                                  click here to view chnages
+                                  View Changes
                                 </button>
                               </div>
-                            </div>
-                          );
-                        }
-                        
-                        const formattedText = formatActivityText(activity.text);
-                        return (
-                          <div key={actIndex} style={activityTimeline.activityItem}>
-                            <span style={activityTimeline.bullet}>•</span>
-                            <span style={activityTimeline.text}>{formattedText}</span>
+                            )}
                           </div>
                         );
                       })}

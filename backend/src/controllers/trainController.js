@@ -787,18 +787,29 @@ const { trainId } = req.params;
 
       console.log(`[PRESERVE TIMES] Fetched ${existingWagons.rows.length} existing wagons for single indent mode. rakeSerialNumber: ${rakeSerialNumber}, rakeSerialNumber: ${rakeSerialNumber}, original trainId: ${trainId}, queryParams: ${JSON.stringify(queryParams)}`);
 
-      // Map by wagon_number (if available) or tower_number for quick lookup
+      // ✅ FIX: Create BOTH wagon_number AND tower_number keys for each wagon
+      // This ensures times can be preserved even when wagon_number changes
       existingWagons.rows.forEach(row => {
-        const key = row.wagon_number && row.wagon_number.trim() !== ""
-          ? `wagon_${row.wagon_number.trim()}`
-          : `tower_${row.tower_number || ''}`;
-        existingTimesMap[key] = {
+        const timesData = {
           loading_start_time: row.loading_start_time,
           loading_end_time: row.loading_end_time,
           loaded_bag_count: row.loaded_bag_count,
           unloaded_bag_count: row.unloaded_bag_count,
         };
-        console.log(`[PRESERVE TIMES] Mapped key "${key}" with times: start=${row.loading_start_time || 'null'}, end=${row.loading_end_time || 'null'}`);
+
+        // Always create tower_number key (most stable identifier)
+        if (row.tower_number) {
+          const towerKey = `tower_${row.tower_number}`;
+          existingTimesMap[towerKey] = timesData;
+          console.log(`[PRESERVE TIMES] Mapped key "${towerKey}" with times: start=${row.loading_start_time || 'null'}, end=${row.loading_end_time || 'null'}`);
+        }
+
+        // Also create wagon_number key if it exists (for direct lookup)
+        if (row.wagon_number && row.wagon_number.trim() !== "") {
+          const wagonKey = `wagon_${row.wagon_number.trim()}`;
+          existingTimesMap[wagonKey] = timesData;
+          console.log(`[PRESERVE TIMES] Mapped key "${wagonKey}" with times: start=${row.loading_start_time || 'null'}, end=${row.loading_end_time || 'null'}`);
+        }
       });
     } else {
       // Get existing wagons for the indent numbers being saved
@@ -807,11 +818,12 @@ const { trainId } = req.params;
       )];
 
       if (indentNumbersInWagons.length > 0) {
-        // ✅ FIX: Only get wagons for the specific indent numbers being saved
-        // Don't include NULL/empty indent_number wagons in multiple indent mode
+        // ✅ CRITICAL FIX: Get wagons for the specific indent numbers being saved
+        // ALSO include wagons WITHOUT indent_number (parent wagons) to preserve their loading times
+        // This is critical because when splitting happens, parent wagons might not have indent_number set yet
         // ✅ FIX: Use rake_serial_number only
         const queryParams = [rakeSerialNumber, indentNumbersInWagons];
-        let queryConditions = `rake_serial_number = $1 AND indent_number = ANY($2)`;
+        let queryConditions = `rake_serial_number = $1 AND (indent_number = ANY($2) OR indent_number IS NULL OR indent_number = '')`;
         
         const existingWagons = await pool.query(
           `SELECT wagon_number, tower_number, indent_number, loading_start_time, loading_end_time, loaded_bag_count, unloaded_bag_count
@@ -822,33 +834,31 @@ const { trainId } = req.params;
 
         console.log(`[PRESERVE TIMES] Fetched ${existingWagons.rows.length} existing wagons for multiple indent mode. rakeSerialNumber: ${rakeSerialNumber}, rakeSerialNumber: ${rakeSerialNumber}, original trainId: ${trainId}, indentNumbers: ${indentNumbersInWagons.join(', ')}, queryParams: ${JSON.stringify(queryParams)}`);
 
-        // Map by wagon_number + indent_number (if available) or tower_number + indent_number
+        // ✅ FIX: Create BOTH wagon_number AND tower_number keys for each wagon
+        // This ensures times can be preserved even when wagon_number changes
         existingWagons.rows.forEach(row => {
           // ✅ FIX: Normalize indent_number (treat null and empty string the same)
           const indentNum = (row.indent_number && row.indent_number.trim() !== "") ? row.indent_number.trim() : '';
 
-          // Create keys for both wagon_number and tower_number lookups
-          if (row.wagon_number && row.wagon_number.trim() !== "") {
-            const wagonKey = `wagon_${row.wagon_number.trim()}_indent_${indentNum}`;
-            existingTimesMap[wagonKey] = {
-              loading_start_time: row.loading_start_time,
-              loading_end_time: row.loading_end_time,
-            };
-            console.log(`[PRESERVE TIMES] Mapped key "${wagonKey}" with times: start=${row.loading_start_time || 'null'}, end=${row.loading_end_time || 'null'}`);
-          }
-          // Also create tower_number key as fallback
+          const timesData = {
+            loading_start_time: row.loading_start_time,
+            loading_end_time: row.loading_end_time,
+            loaded_bag_count: row.loaded_bag_count,
+            unloaded_bag_count: row.unloaded_bag_count,
+          };
+
+          // Always create tower_number key (most stable identifier)
           if (row.tower_number) {
             const towerKey = `tower_${row.tower_number}_indent_${indentNum}`;
-            // Only set if not already set by wagon_number (wagon_number takes priority)
-            if (!existingTimesMap[towerKey]) {
-              existingTimesMap[towerKey] = {
-                loading_start_time: row.loading_start_time,
-                loading_end_time: row.loading_end_time,
-                loaded_bag_count: row.loaded_bag_count,
-                unloaded_bag_count: row.unloaded_bag_count,
-              };
-              console.log(`[PRESERVE TIMES] Mapped key "${towerKey}" with times: start=${row.loading_start_time || 'null'}, end=${row.loading_end_time || 'null'}`);
-            }
+            existingTimesMap[towerKey] = timesData;
+            console.log(`[PRESERVE TIMES] Mapped key "${towerKey}" with times: start=${row.loading_start_time || 'null'}, end=${row.loading_end_time || 'null'}`);
+          }
+
+          // Also create wagon_number key if it exists (for direct lookup)
+          if (row.wagon_number && row.wagon_number.trim() !== "") {
+            const wagonKey = `wagon_${row.wagon_number.trim()}_indent_${indentNum}`;
+            existingTimesMap[wagonKey] = timesData;
+            console.log(`[PRESERVE TIMES] Mapped key "${wagonKey}" with times: start=${row.loading_start_time || 'null'}, end=${row.loading_end_time || 'null'}`);
           }
         });
       }
@@ -929,45 +939,87 @@ const { trainId } = req.params;
       // These are auto-populated by the bag counting system and should NEVER be overwritten by frontend
       // Frontend no longer sends these fields, so we always preserve existing times
       // Try multiple matching strategies for reliability
+      // ✅ FIX: Prioritize tower_number lookup since it's stable (doesn't change when wagon_number changes)
 
       let existingTimes = {};
+      let matchedStrategy = '';
 
-      // Strategy 1: Try wagon_number + indent_number (most reliable)
-      if (w.wagon_number && w.wagon_number.trim() !== "") {
+      // ✅ FIX: Strategy 1 (PRIMARY): Try tower_number + indent_number FIRST (most stable identifier)
+      // Tower number doesn't change when wagon_number is edited, so this is the most reliable
+      if (w.tower_number) {
         const key1 = singleIndent
-          ? `wagon_${w.wagon_number.trim()}`
-          : `wagon_${w.wagon_number.trim()}_indent_${indentNum}`;
+          ? `tower_${w.tower_number}`
+          : `tower_${w.tower_number}_indent_${indentNum}`;
         if (existingTimesMap[key1]) {
           existingTimes = existingTimesMap[key1];
+          matchedStrategy = 'tower_number (primary)';
         }
       }
 
-      // Strategy 2: Try tower_number + indent_number (fallback)
-      if (!existingTimes.loading_start_time && !existingTimes.loading_end_time) {
+      // ✅ CRITICAL FIX: Strategy 1.5: For multiple indent mode, if indentNum is NOT empty, also try matching with empty indent
+      // This handles the case where parent wagons (without indent_number) are being saved with a new indent_number
+      // Parent wagons have keys like "tower_1_indent_" (empty indent), but we're saving with indentNum "A/001.001"
+      if (!singleIndent && !existingTimes.loading_start_time && !existingTimes.loading_end_time && w.tower_number && indentNum && indentNum.trim() !== '') {
+        const key1_5 = `tower_${w.tower_number}_indent_`;
+        if (existingTimesMap[key1_5]) {
+          existingTimes = existingTimesMap[key1_5];
+          matchedStrategy = 'tower_number (parent wagon - empty indent)';
+        }
+      }
+
+      // ✅ FIX: Strategy 2: Try wagon_number + indent_number (fallback if tower_number doesn't match)
+      // This works when wagon_number hasn't changed
+      if (!existingTimes.loading_start_time && !existingTimes.loading_end_time && w.wagon_number && w.wagon_number.trim() !== "") {
         const key2 = singleIndent
-          ? `tower_${w.tower_number || ''}`
-          : `tower_${w.tower_number || ''}_indent_${indentNum}`;
+          ? `wagon_${w.wagon_number.trim()}`
+          : `wagon_${w.wagon_number.trim()}_indent_${indentNum}`;
         if (existingTimesMap[key2]) {
           existingTimes = existingTimesMap[key2];
+          matchedStrategy = 'wagon_number';
         }
       }
 
-      // Strategy 3: For multiple indent mode, try matching by indent_number and tower_number
-      if (!singleIndent && !existingTimes.loading_start_time && !existingTimes.loading_end_time && indentNum) {
-        // Try to find any wagon with same tower_number in this indent
-        const key3 = `tower_${w.tower_number || ''}_indent_${indentNum}`;
+      // ✅ CRITICAL FIX: Strategy 2.5: For multiple indent mode, if indentNum is NOT empty, also try matching wagon_number with empty indent
+      // This handles the case where parent wagons (without indent_number) are being saved with a new indent_number
+      if (!singleIndent && !existingTimes.loading_start_time && !existingTimes.loading_end_time && w.wagon_number && w.wagon_number.trim() !== "" && indentNum && indentNum.trim() !== '') {
+        const key2_5 = `wagon_${w.wagon_number.trim()}_indent_`;
+        if (existingTimesMap[key2_5]) {
+          existingTimes = existingTimesMap[key2_5];
+          matchedStrategy = 'wagon_number (parent wagon - empty indent)';
+        }
+      }
+
+      // ✅ FIX: Strategy 3: For multiple indent mode, try matching without indent suffix if indentNum is empty
+      // This handles cases where indent_number might be normalized differently
+      if (!singleIndent && !existingTimes.loading_start_time && !existingTimes.loading_end_time && w.tower_number && (!indentNum || indentNum === '')) {
+        // Try to find any wagon with same tower_number without indent suffix
+        const key3 = `tower_${w.tower_number}`;
         if (existingTimesMap[key3]) {
           existingTimes = existingTimesMap[key3];
+          matchedStrategy = 'tower_number (no indent)';
         }
       }
 
-      // Strategy 4: Last resort - try to find any wagon in same indent with same tower_number
+      // ✅ FIX: Strategy 4: Last resort - search through all entries for matching tower_number
+      // This handles edge cases where key format might not match exactly
       if (!existingTimes.loading_start_time && !existingTimes.loading_end_time && w.tower_number) {
-        // Search through all entries in the map for this indent and tower_number
+        const towerNumStr = String(w.tower_number);
         for (const [key, times] of Object.entries(existingTimesMap)) {
-          if (key.includes(`tower_${w.tower_number}`) && (singleIndent || key.includes(`indent_${indentNum}`))) {
-            if (times.loading_start_time || times.loading_end_time) {
+          // Check if key contains tower_number and matches indent (if applicable)
+          const hasTowerMatch = key.includes(`tower_${towerNumStr}`) || 
+                               key.startsWith(`tower_${towerNumStr}_`) ||
+                               key === `tower_${towerNumStr}`;
+          
+          if (hasTowerMatch) {
+            // For single indent, any tower match is valid
+            // For multiple indent, check if indent matches or key has no indent suffix
+            const isValidMatch = singleIndent || 
+                                 key.includes(`indent_${indentNum}`) || 
+                                 (!key.includes('_indent_') && (!indentNum || indentNum === ''));
+            
+            if (isValidMatch && (times.loading_start_time || times.loading_end_time)) {
               existingTimes = times;
+              matchedStrategy = 'tower_number (search fallback)';
               break;
             }
           }
@@ -996,7 +1048,7 @@ const { trainId } = req.params;
       
       // ✅ FIX: Log when times ARE preserved (for verification)
       if (loadingStartTime || loadingEndTime) {
-        console.log(`[SUCCESS] Preserved loading times for wagon tower_number=${w.tower_number}, indent_number=${indentNum}: start=${loadingStartTime || 'null'}, end=${loadingEndTime || 'null'}`);
+        console.log(`[SUCCESS] Preserved loading times for wagon tower_number=${w.tower_number}, indent_number=${indentNum}, wagon_number=${w.wagon_number || 'N/A'}: start=${loadingStartTime || 'null'}, end=${loadingEndTime || 'null'} (matched via: ${matchedStrategy || 'unknown'})`);
       }
 
       await pool.query(
@@ -2681,13 +2733,13 @@ const { trainId, activityId } = req.params;
   const decodedTrainId = decodeURIComponent(trainId);
 
   try {
-    // Get ALL REVIEWER_TRAIN_EDITED activities for this train
-    // This combines all reviewer edits (wagon details + rake details) into a single Excel
+    // Get ALL REVIEWER_TRAIN_EDITED and REVIEWER_EDITED activities for this train
+    // This combines all reviewer edits (wagon details + rake details) into a single Excel sheet with Page column
     const activityRes = await pool.query(
       `SELECT activity_type, notes, activity_time, username
        FROM activity_timeline
        WHERE rake_serial_number = $1 
-         AND activity_type = 'REVIEWER_TRAIN_EDITED'
+         AND (activity_type = 'REVIEWER_TRAIN_EDITED' OR activity_type = 'REVIEWER_EDITED')
        ORDER BY activity_time ASC`,
       [decodedTrainId]
     );
@@ -2696,69 +2748,129 @@ const { trainId, activityId } = req.params;
       return res.status(404).json({ message: "No reviewer changes found for this train" });
     }
 
-    // Prepare Excel data: Page, Field Name, Previous value, Modified value
+    // Prepare Excel data: Single sheet with Page column
     const excelData = [];
     
     // Add header row
     excelData.push(['Page', 'Field Name', 'Previous value', 'Modified value']);
 
-    // Process all REVIEWER_TRAIN_EDITED activities and combine their changes
+    // Track unique rake-level changes to avoid duplicates
+    // Key format: "fieldName|oldValue|newValue"
+    const uniqueRakeChanges = new Map();
+    const wagonChanges = [];
+
+    // Process all REVIEWER_TRAIN_EDITED and REVIEWER_EDITED activities and combine their changes
     let hasChanges = false;
     for (const activity of activityRes.rows) {
-      // Parse change details from notes
-      if (activity.notes && activity.notes.includes('|||CHANGE_DETAILS:')) {
-        const parts = activity.notes.split('|||CHANGE_DETAILS:');
-        try {
-          const changeDetails = JSON.parse(parts[1]);
+      if (activity.activity_type === 'REVIEWER_EDITED') {
+        // REVIEWER_EDITED contains rake/dispatch changes in notes format: "Reviewer made changes: Field: old → new"
+        if (activity.notes && activity.notes.startsWith('Reviewer made changes:')) {
+          const changesText = activity.notes.replace('Reviewer made changes: ', '');
+          const changes = changesText.split('; ').filter(c => c.trim());
+          
+          changes.forEach(changeStr => {
+            // Parse format: "Field: "old" → "new""
+            const match = changeStr.match(/^(.+?):\s*"(.+?)"\s*→\s*"(.+?)"$/);
+            if (match) {
+              const [, field, oldValue, newValue] = match;
+              const fieldName = field.trim();
+              const oldVal = oldValue === '(empty)' ? '(empty)' : oldValue;
+              const newVal = newValue === '(empty)' ? '(empty)' : newValue;
+              const key = `${fieldName}|${oldVal}|${newVal}`;
+              
+              // Only add if not already present
+              if (!uniqueRakeChanges.has(key)) {
+                uniqueRakeChanges.set(key, {
+                  field: fieldName,
+                  oldValue: oldVal,
+                  newValue: newVal
+                });
+                hasChanges = true;
+              }
+            }
+          });
+        }
+      } else if (activity.activity_type === 'REVIEWER_TRAIN_EDITED') {
+        // Parse change details from notes
+        if (activity.notes && activity.notes.includes('|||CHANGE_DETAILS:')) {
+          const parts = activity.notes.split('|||CHANGE_DETAILS:');
+          try {
+            const changeDetails = JSON.parse(parts[1]);
 
-          // Add header changes (Rake Details)
-          if (changeDetails.headerChanges && changeDetails.headerChanges.length > 0) {
-            changeDetails.headerChanges.forEach(change => {
-              const fieldLabel = change.field || 'Field';
-              excelData.push([
-                'Rake Details',
-                fieldLabel,
-                change.oldValue || '(empty)',
-                change.newValue || '(empty)'
-              ]);
-              hasChanges = true;
-            });
-          }
+            // Collect header changes (Rake page) - only add unique ones
+            if (changeDetails.headerChanges && changeDetails.headerChanges.length > 0) {
+              changeDetails.headerChanges.forEach(change => {
+                const fieldLabel = change.field || 'Field';
+                const oldVal = change.oldValue || '(empty)';
+                const newVal = change.newValue || '(empty)';
+                const key = `${fieldLabel}|${oldVal}|${newVal}`;
+                
+                // Only add if not already present
+                if (!uniqueRakeChanges.has(key)) {
+                  uniqueRakeChanges.set(key, {
+                    field: fieldLabel,
+                    oldValue: oldVal,
+                    newValue: newVal
+                  });
+                  hasChanges = true;
+                }
+              });
+            }
 
-          // Add wagon changes (Wagon Details)
-          if (changeDetails.wagonChanges && changeDetails.wagonChanges.length > 0) {
-            changeDetails.wagonChanges.forEach(change => {
-              const wagonLabel = change.wagon || 'Wagon';
-              const fieldLabel = change.field || 'Field';
-              excelData.push([
-                'Wagon Details',
-                `${wagonLabel}: ${fieldLabel}`,
-                change.oldValue || '(empty)',
-                change.newValue || '(empty)'
-              ]);
-              hasChanges = true;
-            });
+            // Collect wagon changes (Wagon page) - add all of them
+            if (changeDetails.wagonChanges && changeDetails.wagonChanges.length > 0) {
+              changeDetails.wagonChanges.forEach(change => {
+                const wagonLabel = change.wagon || 'Wagon';
+                const fieldLabel = change.field || 'Field';
+                wagonChanges.push({
+                  field: `${wagonLabel}: ${fieldLabel}`,
+                  oldValue: change.oldValue || '(empty)',
+                  newValue: change.newValue || '(empty)'
+                });
+                hasChanges = true;
+              });
+            }
+          } catch (e) {
+            console.error('Error parsing change details:', e);
+            // Continue processing other activities even if one fails
           }
-        } catch (e) {
-          console.error('Error parsing change details:', e);
-          // Continue processing other activities even if one fails
         }
       }
     }
+
+    // Add unique rake changes to Excel data
+    uniqueRakeChanges.forEach(change => {
+      excelData.push([
+        'Rake',
+        change.field,
+        change.oldValue,
+        change.newValue
+      ]);
+    });
+
+    // Add all wagon changes to Excel data
+    wagonChanges.forEach(change => {
+      excelData.push([
+        'Wagon',
+        change.field,
+        change.oldValue,
+        change.newValue
+      ]);
+    });
 
     // If no changes were found, return error
     if (!hasChanges) {
       return res.status(400).json({ message: "No change details found in reviewer activities" });
     }
 
-    // Create workbook and worksheet
+    // Create workbook with single sheet
     const worksheet = XLSX.utils.aoa_to_sheet(excelData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Reviewer Changes');
 
     // Set column widths
     worksheet['!cols'] = [
-      { wch: 20 }, // Page
+      { wch: 15 }, // Page
       { wch: 45 }, // Field Name
       { wch: 30 }, // Previous value
       { wch: 30 }  // Modified value
@@ -2787,13 +2899,13 @@ const exportAllReviewerChanges = async (req, res) => {
   const decodedTrainId = decodeURIComponent(trainId);
 
   try {
-    // Get ALL REVIEWER_TRAIN_EDITED activities for this train
-    // This combines all reviewer edits (wagon details + rake details) into a single Excel
+    // Get ALL REVIEWER_TRAIN_EDITED and REVIEWER_EDITED activities for this train
+    // This combines all reviewer edits (wagon details + rake details) into a single Excel sheet with Page column
     const activityRes = await pool.query(
       `SELECT activity_type, notes, activity_time, username
        FROM activity_timeline
        WHERE rake_serial_number = $1 
-         AND activity_type = 'REVIEWER_TRAIN_EDITED'
+         AND (activity_type = 'REVIEWER_TRAIN_EDITED' OR activity_type = 'REVIEWER_EDITED')
        ORDER BY activity_time ASC`,
       [decodedTrainId]
     );
@@ -2802,69 +2914,129 @@ const exportAllReviewerChanges = async (req, res) => {
       return res.status(404).json({ message: "No reviewer changes found for this train" });
     }
 
-    // Prepare Excel data: Page, Field Name, Previous value, Modified value
+    // Prepare Excel data: Single sheet with Page column
     const excelData = [];
     
     // Add header row
     excelData.push(['Page', 'Field Name', 'Previous value', 'Modified value']);
 
-    // Process all REVIEWER_TRAIN_EDITED activities and combine their changes
+    // Track unique rake-level changes to avoid duplicates
+    // Key format: "fieldName|oldValue|newValue"
+    const uniqueRakeChanges = new Map();
+    const wagonChanges = [];
+
+    // Process all REVIEWER_TRAIN_EDITED and REVIEWER_EDITED activities and combine their changes
     let hasChanges = false;
     for (const activity of activityRes.rows) {
-      // Parse change details from notes
-      if (activity.notes && activity.notes.includes('|||CHANGE_DETAILS:')) {
-        const parts = activity.notes.split('|||CHANGE_DETAILS:');
-        try {
-          const changeDetails = JSON.parse(parts[1]);
+      if (activity.activity_type === 'REVIEWER_EDITED') {
+        // REVIEWER_EDITED contains rake/dispatch changes in notes format: "Reviewer made changes: Field: old → new"
+        if (activity.notes && activity.notes.startsWith('Reviewer made changes:')) {
+          const changesText = activity.notes.replace('Reviewer made changes: ', '');
+          const changes = changesText.split('; ').filter(c => c.trim());
+          
+          changes.forEach(changeStr => {
+            // Parse format: "Field: "old" → "new""
+            const match = changeStr.match(/^(.+?):\s*"(.+?)"\s*→\s*"(.+?)"$/);
+            if (match) {
+              const [, field, oldValue, newValue] = match;
+              const fieldName = field.trim();
+              const oldVal = oldValue === '(empty)' ? '(empty)' : oldValue;
+              const newVal = newValue === '(empty)' ? '(empty)' : newValue;
+              const key = `${fieldName}|${oldVal}|${newVal}`;
+              
+              // Only add if not already present
+              if (!uniqueRakeChanges.has(key)) {
+                uniqueRakeChanges.set(key, {
+                  field: fieldName,
+                  oldValue: oldVal,
+                  newValue: newVal
+                });
+                hasChanges = true;
+              }
+            }
+          });
+        }
+      } else if (activity.activity_type === 'REVIEWER_TRAIN_EDITED') {
+        // Parse change details from notes
+        if (activity.notes && activity.notes.includes('|||CHANGE_DETAILS:')) {
+          const parts = activity.notes.split('|||CHANGE_DETAILS:');
+          try {
+            const changeDetails = JSON.parse(parts[1]);
 
-          // Add header changes (Rake Details)
-          if (changeDetails.headerChanges && changeDetails.headerChanges.length > 0) {
-            changeDetails.headerChanges.forEach(change => {
-              const fieldLabel = change.field || 'Field';
-              excelData.push([
-                'Rake Details',
-                fieldLabel,
-                change.oldValue || '(empty)',
-                change.newValue || '(empty)'
-              ]);
-              hasChanges = true;
-            });
-          }
+            // Collect header changes (Rake page) - only add unique ones
+            if (changeDetails.headerChanges && changeDetails.headerChanges.length > 0) {
+              changeDetails.headerChanges.forEach(change => {
+                const fieldLabel = change.field || 'Field';
+                const oldVal = change.oldValue || '(empty)';
+                const newVal = change.newValue || '(empty)';
+                const key = `${fieldLabel}|${oldVal}|${newVal}`;
+                
+                // Only add if not already present
+                if (!uniqueRakeChanges.has(key)) {
+                  uniqueRakeChanges.set(key, {
+                    field: fieldLabel,
+                    oldValue: oldVal,
+                    newValue: newVal
+                  });
+                  hasChanges = true;
+                }
+              });
+            }
 
-          // Add wagon changes (Wagon Details)
-          if (changeDetails.wagonChanges && changeDetails.wagonChanges.length > 0) {
-            changeDetails.wagonChanges.forEach(change => {
-              const wagonLabel = change.wagon || 'Wagon';
-              const fieldLabel = change.field || 'Field';
-              excelData.push([
-                'Wagon Details',
-                `${wagonLabel}: ${fieldLabel}`,
-                change.oldValue || '(empty)',
-                change.newValue || '(empty)'
-              ]);
-              hasChanges = true;
-            });
+            // Collect wagon changes (Wagon page) - add all of them
+            if (changeDetails.wagonChanges && changeDetails.wagonChanges.length > 0) {
+              changeDetails.wagonChanges.forEach(change => {
+                const wagonLabel = change.wagon || 'Wagon';
+                const fieldLabel = change.field || 'Field';
+                wagonChanges.push({
+                  field: `${wagonLabel}: ${fieldLabel}`,
+                  oldValue: change.oldValue || '(empty)',
+                  newValue: change.newValue || '(empty)'
+                });
+                hasChanges = true;
+              });
+            }
+          } catch (e) {
+            console.error('Error parsing change details:', e);
+            // Continue processing other activities even if one fails
           }
-        } catch (e) {
-          console.error('Error parsing change details:', e);
-          // Continue processing other activities even if one fails
         }
       }
     }
+
+    // Add unique rake changes to Excel data
+    uniqueRakeChanges.forEach(change => {
+      excelData.push([
+        'Rake',
+        change.field,
+        change.oldValue,
+        change.newValue
+      ]);
+    });
+
+    // Add all wagon changes to Excel data
+    wagonChanges.forEach(change => {
+      excelData.push([
+        'Wagon',
+        change.field,
+        change.oldValue,
+        change.newValue
+      ]);
+    });
 
     // If no changes were found, return error
     if (!hasChanges) {
       return res.status(400).json({ message: "No change details found in reviewer activities" });
     }
 
-    // Create workbook and worksheet
+    // Create workbook with single sheet
     const worksheet = XLSX.utils.aoa_to_sheet(excelData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Reviewer Changes');
 
     // Set column widths
     worksheet['!cols'] = [
-      { wch: 20 }, // Page
+      { wch: 15 }, // Page
       { wch: 45 }, // Field Name
       { wch: 30 }, // Previous value
       { wch: 30 }  // Modified value
@@ -3274,13 +3446,6 @@ const { trainId } = req.params;
         [rakeSerialNumber]
       );
 
-      const parentWagonRecords = await pool.query(
-        `SELECT * FROM wagon_records 
-         WHERE rake_serial_number = $1 
-         ORDER BY tower_number`,
-        [rakeSerialNumber]
-      );
-
       const parentDispatchRecords = await pool.query(
         `SELECT * FROM dispatch_records 
          WHERE rake_serial_number = $1 
@@ -3357,69 +3522,13 @@ const { trainId } = req.params;
           );
         }
 
-        // ✅ FIX: Check if this indent already has wagons BEFORE updating
-        // This ensures we can copy parent wagons if needed
-        const existingWagonsForIndent = await pool.query(
-          `SELECT COUNT(*) as count FROM wagon_records 
-           WHERE (rake_serial_number = $1 OR rake_serial_number = $2)
-             AND indent_number = $3`,
-          [rakeSerialNumber, decodedTrainId, indentNum]
-        );
-
-        const hasWagonsForIndent = parseInt(existingWagonsForIndent.rows[0].count) > 0;
-
-        // ✅ FIX: If there are wagons without indent_number (parent wagons), copy them to this child indent
-        // This ensures all wagon data (user input and backend entries) is preserved for each child
-        // Only copy if this indent doesn't have wagons yet
-        if (!hasWagonsForIndent) {
-          const wagonsWithoutIndent = parentWagonRecords.rows.filter(w => 
-            !w.indent_number || w.indent_number === ''
-          );
-
-          if (wagonsWithoutIndent.length > 0) {
-            for (const parentWagon of wagonsWithoutIndent) {
-              await pool.query(
-                `
-                INSERT INTO wagon_records (
-                  wagon_number, wagon_type, cc_weight, sick_box, wagon_to_be_loaded,
-                  tower_number, loaded_bag_count, unloaded_bag_count,
-                  loading_start_time, loading_end_time, seal_number, stoppage_time,
-                  remarks, loading_status, indent_number, wagon_destination,
-                  commodity, customer_id, rake_serial_number, siding
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
-                `,
-                [
-                  parentWagon.wagon_number,
-                  parentWagon.wagon_type,
-                  parentWagon.cc_weight,
-                  parentWagon.sick_box,
-                  parentWagon.wagon_to_be_loaded,
-                  parentWagon.tower_number,
-                  parentWagon.loaded_bag_count,
-                  parentWagon.unloaded_bag_count,
-                  parentWagon.loading_start_time,
-                  parentWagon.loading_end_time,
-                  parentWagon.seal_number,
-                  parentWagon.stoppage_time,
-                  parentWagon.remarks,
-                  parentWagon.loading_status,
-                  indentNum, // Set indent_number for this child
-                  parentWagon.wagon_destination,
-                  parentWagon.commodity,
-                  parentWagon.customer_id,
-                  assignedRakeSerial, // Use new rake_serial_number
-                  parentWagon.siding || null, // Add siding from parent wagon
-                ]
-              );
-            }
-            console.log(`[GENERATE MULTIPLE RAKE SERIAL] Copied ${wagonsWithoutIndent.length} parent wagons to indent ${indentNum}`);
-          }
-        }
-
-        // ✅ FIX: Update wagon_records for this indent - preserve ALL fields
-        // Update rake_serial_number for all wagons belonging to this indent
-        // All other fields (wagon_number, wagon_type, cc_weight, loading times, bag counts, etc.) are preserved
+        // ✅ CRITICAL FIX: Instead of INSERTing new wagons, UPDATE existing wagons' rake_serial_number
+        // This preserves ALL fields (including loading times) automatically since we're only updating rake_serial_number
+        // Wagons should already exist in the database (saved by saveDraft with indent numbers)
+        // We just need to update their rake_serial_number to the assigned value
+        
+        // ✅ CRITICAL FIX: UPDATE existing wagons' rake_serial_number (preserves ALL fields including loading times)
+        // Only update rake_serial_number - all other fields remain unchanged
         await pool.query(
           `
           UPDATE wagon_records
@@ -3430,41 +3539,10 @@ const { trainId } = req.params;
           [assignedRakeSerial, rakeSerialNumber, decodedTrainId, indentNum]
         );
 
-        // ✅ FIX: Copy loading times from parent wagons (wagons without indent_number) to child wagons
-        // This ensures that if parent wagons have loading times, they are copied to child wagons
-        // Match by tower_number to copy loading times from parent to child
-        // This handles the case where wagons already exist for this indent (hasWagonsForIndent = true)
-        // For newly inserted wagons (hasWagonsForIndent = false), loading times are already copied in the INSERT above
-        const parentWagonsWithoutIndent = parentWagonRecords.rows.filter(w => 
-          !w.indent_number || w.indent_number.trim() === ''
-        );
-
-        if (parentWagonsWithoutIndent.length > 0) {
-          for (const parentWagon of parentWagonsWithoutIndent) {
-            // Copy loading times from parent to child if parent has them
-            // This ensures auto-populated loading times are shared with child indent wagons
-            if (parentWagon.loading_start_time || parentWagon.loading_end_time) {
-              // Update child wagon with same tower_number to copy loading times from parent
-              await pool.query(
-                `
-                UPDATE wagon_records
-                SET loading_start_time = $1,
-                    loading_end_time = $2
-                WHERE rake_serial_number = $3
-                  AND indent_number = $4
-                  AND tower_number = $5
-                `,
-                [
-                  parentWagon.loading_start_time,
-                  parentWagon.loading_end_time,
-                  assignedRakeSerial,
-                  indentNum,
-                  parentWagon.tower_number
-                ]
-              );
-            }
-          }
-        }
+        // ✅ CRITICAL FIX: No need to copy loading times separately - UPDATE preserves ALL fields automatically
+        // Since we're only updating rake_serial_number, all other fields (including loading times) are preserved
+        // This is much simpler and more reliable than trying to copy individual fields
+        console.log(`[GENERATE MULTIPLE RAKE SERIAL] ✅ Updated rake_serial_number for indent ${indentNum} to ${assignedRakeSerial} - all fields (including loading times) preserved automatically`);
 
         // ✅ FIX: Handle dispatch_records for this indent
         const existingDispatchForIndent = parentDispatchRecords.rows.find(r => 
