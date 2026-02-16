@@ -6,6 +6,7 @@ import { checkSessionOnLoad } from "./utils/sessionUtils";
 import EditOptionsPopup from "./components/EditOptionsPopup";
 import IconButton from "./components/IconButton";
 import WarningPopup from "./components/WarningPopup";
+import Speedometer from "./components/Speedometer";
 
 
 const ROWS_PER_PAGE = 5;
@@ -284,6 +285,40 @@ function Dashboard() {
     return hasBagCountStarted;
   });
 
+  /* ================= CUSTOMER SPEEDOMETER CALCULATIONS ================= */
+  // Calculate totals for speedometer charts (for CUSTOMER role only)
+  const calculateCustomerTotals = () => {
+    if (role !== "CUSTOMER") return null;
+
+    let totalBagsLoaded = 0;
+    let totalBagsToBeLoaded = 0;
+    let totalWagonsLoaded = 0;
+    let totalWagonsToBeLoaded = 0;
+
+    visibleRecords.forEach((row) => {
+      // Bags
+      totalBagsLoaded += Number(row.total_bags_loaded || 0);
+      totalBagsToBeLoaded += Number(row.total_bags_to_be_loaded || 0);
+      
+      // Wagons
+      totalWagonsLoaded += Number(row.total_wagons_loaded || 0);
+      totalWagonsToBeLoaded += Number(row.number_of_indent_wagons || 0);
+    });
+
+    return {
+      bags: {
+        loaded: totalBagsLoaded,
+        total: totalBagsToBeLoaded || totalBagsLoaded, // Use loaded as total if to_be_loaded is null
+      },
+      wagons: {
+        loaded: totalWagonsLoaded,
+        total: totalWagonsToBeLoaded || totalWagonsLoaded, // Use loaded as total if to_be_loaded is null
+      },
+    };
+  };
+
+  const customerTotals = calculateCustomerTotals();
+
 
   /* ================= COLUMN FILTER ================= */
   const filteredRecords = visibleRecords.filter((row) => {
@@ -443,18 +478,22 @@ function Dashboard() {
         {/* ================= SUMMARY ================= */}
         <div style={styles.summaryWrapper}>
           {role === "CUSTOMER" ? (
-            <div style={styles.summaryRow}>
-              <SummaryCard
-                title="Total Trains"
-                value={summary.customerSummary.total_trains}
+            <div style={styles.speedometerContainer}>
+              <Speedometer
+                loaded={customerTotals?.bags.loaded || 0}
+                total={customerTotals?.bags.total || 0}
+                label="Bags Loaded"
+                balanceLabel="Balance Bags To Be Loaded"
+                totalLabel="Total Number of bags to be loaded"
+                balanceTotalLabel="Balance Bags To Be Loaded"
               />
-              <SummaryCard
-                title="Total Wagons"
-                value={summary.customerSummary.total_wagons}
-              />
-              <SummaryCard
-                title="Total Bags Loaded"
-                value={summary.customerSummary.total_bags_loaded}
+              <Speedometer
+                loaded={customerTotals?.wagons.loaded || 0}
+                total={customerTotals?.wagons.total || 0}
+                label="Wagons Loaded"
+                balanceLabel="Balance Wagons To Be Loaded"
+                totalLabel="Total Number of wagons to be loaded"
+                balanceTotalLabel="Balance Wagons To Be Loaded"
               />
             </div>
           ) : (
@@ -511,25 +550,37 @@ function Dashboard() {
             <thead>
               {/* ================= COLUMN HEADERS ================= */}
               <tr>
-                <th style={styles.th}>Rake Serial Number</th>
-                <th style={styles.th}>Indent Number</th>
-                <th style={styles.th}>Siding</th>
-                {role !== "CUSTOMER" && (
-                  <th style={styles.th}>Party/Customer's Name</th>
+                {role === "CUSTOMER" ? (
+                  <>
+                    <th style={styles.th}>Source</th>
+                    <th style={styles.th}>Indent Number</th>
+                    <th style={styles.th}>Rake Loading Start Date & Time</th>
+                    <th style={styles.th}>Number Of Wagons Loaded</th>
+                    <th style={styles.th}>Number Of Indent Wagons</th>
+                    <th style={styles.th}>Number Of Bags Loaded</th>
+                    <th style={styles.th}>Commodity</th>
+                    <th style={styles.th}>Siding</th>
+                    <th style={styles.th}>Destination</th>
+                    <th style={styles.th}>Rake Loading Completion Date & Time</th>
+                    <th style={styles.th}>Status</th>
+                    <th style={styles.th}>Action</th>
+                  </>
+                ) : (
+                  <>
+                    <th style={styles.th}>Rake Serial Number</th>
+                    <th style={styles.th}>Indent Number</th>
+                    <th style={styles.th}>Siding</th>
+                    <th style={styles.th}>Party/Customer's Name</th>
+                    <th style={styles.th}>Destination</th>
+                    <th style={styles.th}>Commodity</th>
+                    <th style={styles.th}>Rake Loading Start Date & Time</th>
+                    <th style={styles.th}>Rake Loading Completion Date & Time</th>
+                    <th style={styles.th}>Number of Bags Loaded</th>
+                    <th style={styles.th}>Number of Bags To Be Loaded</th>
+                    <th style={styles.th}>Status</th>
+                    <th style={styles.th}>Action</th>
+                  </>
                 )}
-                
-                <th style={styles.th}>Destination</th>
-                <th style={styles.th}>Commodity</th>
-                <th style={styles.th}>Rake Loading Start Date & Time</th>
-                <th style={styles.th}>Rake Loading Completion Date & Time</th>
-                <th style={styles.th}>Number of Bags Loaded</th>
-                <th style={styles.th}>Number of Bags To Be Loaded</th>
-                {role !== "CUSTOMER" && (
-                  <th style={styles.th}>Status</th>
-                )}
-                <th style={styles.th}>
-                  Action
-                </th>
               </tr>
 
               {/* ================= FILTER ROW ================= */}
@@ -677,106 +728,139 @@ function Dashboard() {
 
             {/* ================= TABLE BODY ================= */}
             <tbody>
-              {paginatedRecords.map((row, index) => (
-                <tr
-                  key={`${row.train_id}-${row.indent_number || index}`}
-                  style={{
-                    backgroundColor: "#dbdbdbff"
-                  }}
-                >
-                  <td style={styles.td}>{row.train_id}</td>
-                  <td style={styles.td}>{row.indent_number || "-"}</td>
-                  <td style={styles.td}>{row.siding || "-"}</td>
-                  {role !== "CUSTOMER" && (
-                    <td style={styles.td}>{row.customer_name || "-"}</td>
-                  )}
-                  <td style={styles.td}>{row.wagon_destination || "-"}</td>
-                  <td style={styles.td}>{row.commodity || "-"}</td>
+              {paginatedRecords.map((row, index) => {
+                let statusDisplay;
+                if (row.status === "APPROVED") {
+                  statusDisplay = "Rake Loading Completed";
+                } else if (row.status === "CANCELLED") {
+                  statusDisplay = "Cancelled Indent";
+                } else {
+                  statusDisplay = "Rake Loading In Progress";
+                }
 
-                  <td style={styles.td}>
-                    {formatDateTime(row.rake_loading_start_datetime)}
-                  </td>
+                return (
+                  <tr
+                    key={`${row.train_id}-${row.indent_number || index}`}
+                    style={{
+                      backgroundColor: "#dbdbdbff"
+                    }}
+                  >
+                    {role === "CUSTOMER" ? (
+                      <>
+                        <td style={styles.td}>{row.siding || "-"}</td>
+                        <td style={styles.td}>{row.indent_number || "-"}</td>
+                        <td style={styles.td}>
+                          {formatDateTime(row.rake_loading_start_datetime)}
+                        </td>
+                        <td style={styles.td}>{row.total_wagons_loaded || 0}</td>
+                        <td style={styles.td}>{row.number_of_indent_wagons || 0}</td>
+                        <td style={styles.td}>{row.total_bags_loaded || 0}</td>
+                        <td style={styles.td}>{row.commodity || "-"}</td>
+                        <td style={styles.td}>{row.siding || "-"}</td>
+                        <td style={styles.td}>{row.wagon_destination || "-"}</td>
+                        <td style={styles.td}>
+                          {formatDateTime(row.rake_loading_end_actual)}
+                        </td>
+                        <td style={{ ...styles.td, background: "#dbdbdbff", fontWeight: "700" }}>
+                          {statusDisplay}
+                        </td>
+                        <td style={styles.actionTd}>
+                          <IconButton
+                            label="View"
+                            onClick={() => {
+                              const url = row.indent_number
+                                ? `/view/${encodeURIComponent(row.train_id)}?indent_number=${encodeURIComponent(row.indent_number)}`
+                                : `/view/${encodeURIComponent(row.train_id)}`;
+                              navigate(url);
+                            }}
+                          />
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td style={styles.td}>{row.train_id}</td>
+                        <td style={styles.td}>{row.indent_number || "-"}</td>
+                        <td style={styles.td}>{row.siding || "-"}</td>
+                        <td style={styles.td}>{row.customer_name || "-"}</td>
+                        <td style={styles.td}>{row.wagon_destination || "-"}</td>
+                        <td style={styles.td}>{row.commodity || "-"}</td>
+                        <td style={styles.td}>
+                          {formatDateTime(row.rake_loading_start_datetime)}
+                        </td>
+                        <td style={styles.td}>
+                          {formatDateTime(row.rake_loading_end_actual)}
+                        </td>
+                        <td style={styles.td}>{row.total_bags_loaded}</td>
+                        <td style={styles.td}>{row.total_bags_to_be_loaded ?? "-"}</td>
+                        <td style={{ ...styles.td, background: "#dbdbdbff", fontWeight: "700" }}>
+                          {statusDisplay}
+                        </td>
+                        <td style={styles.actionTd}>
+                          <IconButton
+                            label="View"
+                            onClick={() => {
+                              const url = row.indent_number
+                                ? `/view/${encodeURIComponent(row.train_id)}?indent_number=${encodeURIComponent(row.indent_number)}`
+                                : `/view/${encodeURIComponent(row.train_id)}`;
+                              navigate(url);
+                            }}
+                          />
 
-                  <td style={styles.td}>
-                    {formatDateTime(row.rake_loading_end_actual)}
-                  </td>
+                          {(role === "ADMIN" || role === "SUPER_ADMIN") && (
+                            (() => {
+                              const isUnassigned =
+                                !row.assigned_reviewer ||
+                                String(row.assigned_reviewer).trim() === "";
+                              const isRevokedBySuperAdmin = !!row.revoked_by_superadmin;
 
-                  <td style={styles.td}>{row.total_bags_loaded}</td>
-                  <td style={styles.td}>{row.total_bags_to_be_loaded ?? "-"}</td>
-
-                  {role !== "CUSTOMER" && (
-                    <td style={{ ...styles.td, background: "#dbdbdbff", fontWeight: "700" }}>
-                      {row.status === "APPROVED"
-                        ? "Rake Loading Completed"
-                        : row.status === "CANCELLED"
-                        ? "Cancelled Indent"
-                        : "Rake Loading In Progress"}
-                    </td>
-                  )}
-
-                  <td style={styles.actionTd}>
-                    <IconButton
-                      label="View"
-                      onClick={() => {
-                        const url = row.indent_number
-                          ? `/view/${encodeURIComponent(row.train_id)}?indent_number=${encodeURIComponent(row.indent_number)}`
-                          : `/view/${encodeURIComponent(row.train_id)}`;
-                        navigate(url);
-                      }}
-                    />
-
-                    {(role === "ADMIN" || role === "SUPER_ADMIN") && (
-                      (() => {
-                        const isUnassigned =
-                          !row.assigned_reviewer ||
-                          String(row.assigned_reviewer).trim() === "";
-                        const isRevokedBySuperAdmin = !!row.revoked_by_superadmin;
-
-                        let canEdit = false;
-                        // ✅ Only enable edit if bag count has started for at least one wagon
-                        const hasBagCountStarted = (row.total_bags_loaded || 0) > 0;
-                        
-                        if (role === "ADMIN") {
-                          // Admin can edit drafts, rejected, or in-progress
-                          // BUT NOT rows that were revoked by a Super Admin.
-                          // BUT NOT rows that are assigned to a reviewer (once assigned, admin loses edit access)
-                          // ✅ FIX: Explicitly exclude PENDING_APPROVAL and APPROVED statuses
-                          // ✅ FIX: Prevent editing when task is assigned to a reviewer
-                          // ✅ Only enable edit if bag count has started
-                          canEdit =
-                            hasBagCountStarted &&
-                            !isRevokedBySuperAdmin &&
-                            isUnassigned && // ✅ FIX: Only allow edit if task is NOT assigned to a reviewer
-                            row.status !== "PENDING_APPROVAL" &&
-                            row.status !== "APPROVED" &&
-                            (
-                              row.status === "DRAFT" ||
-                              row.status === "REJECTED" ||
-                              row.status === "LOADING_IN_PROGRESS"
-                            );
-                        } else if (role === "SUPER_ADMIN") {
-                          // SuperAdmin can edit ONLY in-progress rows they see (i.e. ones they revoked)
-                          // Approved rows and pending approval rows remain view-only.
-                          // ✅ FIX: Explicitly exclude PENDING_APPROVAL and APPROVED statuses
-                          // ✅ Only enable edit if bag count has started
-                          canEdit = hasBagCountStarted && row.status === "LOADING_IN_PROGRESS";
-                        }
-
-                        return (
-                          canEdit && (
-                            <IconButton
-                              label="Edit"
-                              onClick={() =>
-                                handleEditClick(row.train_id, row.indent_number)
+                              let canEdit = false;
+                              // ✅ Only enable edit if bag count has started for at least one wagon
+                              const hasBagCountStarted = (row.total_bags_loaded || 0) > 0;
+                              
+                              if (role === "ADMIN") {
+                                // Admin can edit drafts, rejected, or in-progress
+                                // BUT NOT rows that were revoked by a Super Admin.
+                                // BUT NOT rows that are assigned to a reviewer (once assigned, admin loses edit access)
+                                // ✅ FIX: Explicitly exclude PENDING_APPROVAL and APPROVED statuses
+                                // ✅ FIX: Prevent editing when task is assigned to a reviewer
+                                // ✅ Only enable edit if bag count has started
+                                canEdit =
+                                  hasBagCountStarted &&
+                                  !isRevokedBySuperAdmin &&
+                                  isUnassigned && // ✅ FIX: Only allow edit if task is NOT assigned to a reviewer
+                                  row.status !== "PENDING_APPROVAL" &&
+                                  row.status !== "APPROVED" &&
+                                  (
+                                    row.status === "DRAFT" ||
+                                    row.status === "REJECTED" ||
+                                    row.status === "LOADING_IN_PROGRESS"
+                                  );
+                              } else if (role === "SUPER_ADMIN") {
+                                // SuperAdmin can edit ONLY in-progress rows they see (i.e. ones they revoked)
+                                // Approved rows and pending approval rows remain view-only.
+                                // ✅ FIX: Explicitly exclude PENDING_APPROVAL and APPROVED statuses
+                                // ✅ Only enable edit if bag count has started
+                                canEdit = hasBagCountStarted && row.status === "LOADING_IN_PROGRESS";
                               }
-                            />
-                          )
-                        );
-                      })()
+
+                              return (
+                                canEdit && (
+                                  <IconButton
+                                    label="Edit"
+                                    onClick={() =>
+                                      handleEditClick(row.train_id, row.indent_number)
+                                    }
+                                  />
+                                )
+                              );
+                            })()
+                          )}
+                        </td>
+                      </>
                     )}
-                  </td>
-                </tr>
-              ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -864,6 +948,16 @@ const styles = {
     display: "grid",
     gridTemplateColumns: "repeat(3, 1fr)",
     gap: "20px",
+  },
+
+  speedometerContainer: {
+    display: "flex",
+    gap: "60px",
+    justifyContent: "center",
+    alignItems: "flex-start",
+    flexWrap: "wrap",
+    marginBottom: "32px",
+    width: "100%",
   },
 
   card: {

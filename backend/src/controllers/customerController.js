@@ -1,6 +1,7 @@
 const pool = require("../config/database");
 const path = require("path");
 const { updateExcelWithCustomers } = require("../services/excelService");
+const { validateEmail } = require("../utils/emailValidator");
 
 const getCustomers = async (req, res) => {
   try {
@@ -15,14 +16,25 @@ const getCustomers = async (req, res) => {
 };
 
 const createCustomer = async (req, res) => {
-  const { customer_name, password } = req.body || {};
+  const { customer_name, password, email } = req.body || {};
 
   if (!customer_name || !customer_name.trim() || !password || !password.trim()) {
     return res.status(400).json({ message: "customer_name and password are required" });
   }
 
+  // Validate email
+  if (!email || !email.trim()) {
+    return res.status(400).json({ message: "email is required" });
+  }
+
+  const emailValidation = validateEmail(email);
+  if (!emailValidation.isValid) {
+    return res.status(400).json({ message: emailValidation.error });
+  }
+
   const name = customer_name.trim();
   const pwd = password.trim();
+  const normalizedEmail = emailValidation.normalized;
 
   try {
     // Check if username already exists
@@ -32,6 +44,15 @@ const createCustomer = async (req, res) => {
     );
     if (existingUser.rows.length > 0) {
       return res.status(409).json({ message: "Username already exists" });
+    }
+
+    // Check for existing email
+    const existingEmail = await pool.query(
+      "SELECT 1 FROM users WHERE email = $1",
+      [normalizedEmail]
+    );
+    if (existingEmail.rows.length > 0) {
+      return res.status(409).json({ message: "Email already exists" });
     }
 
     // Generate next customer_code based on max(id)
@@ -51,13 +72,13 @@ const createCustomer = async (req, res) => {
 
     const customerId = custRes.rows[0].id;
 
-    // Insert corresponding CUSTOMER user
+    // Insert corresponding CUSTOMER user with email
     await pool.query(
       `
-      INSERT INTO users (username, password, role, customer_id, is_active, created_at)
-      VALUES ($1, $2, 'CUSTOMER', $3, true, NOW())
+      INSERT INTO users (username, password, role, customer_id, is_active, email, created_at)
+      VALUES ($1, $2, 'CUSTOMER', $3, true, $4, NOW())
       `,
-      [name, pwd, customerId]
+      [name, pwd, customerId, normalizedEmail]
     );
 
     // Update both Excel template files with new customer

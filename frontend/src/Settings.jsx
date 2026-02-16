@@ -26,6 +26,7 @@ function Settings() {
   const [userType, setUserType] = useState("");
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [newEmail, setNewEmail] = useState("");
   const [isSubmittingUser, setIsSubmittingUser] = useState(false);
   const [userMessage, setUserMessage] = useState(null);
   const [userError, setUserError] = useState(null);
@@ -60,6 +61,10 @@ function Settings() {
   const [statusFilter, setStatusFilter] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const usersPerPage = 10;
+
+  // Email editing state
+  const [editingEmailId, setEditingEmailId] = useState(null);
+  const [editingEmail, setEditingEmail] = useState("");
 
   // Fetch dropdown options and users on mount
   useEffect(() => {
@@ -244,6 +249,51 @@ function Settings() {
     }
   };
 
+  // Update user email
+  const handleSaveEmail = async (userId) => {
+    setUserManageMessage(null);
+    setUserManageError(null);
+
+    // Validate email
+    if (!editingEmail.trim()) {
+      setUserManageError("Email cannot be empty");
+      return;
+    }
+
+    // Basic email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(editingEmail.trim())) {
+      setUserManageError("Please enter a valid email address");
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/users/${userId}/email`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-role": role || "",
+          "x-username": username || "",
+        },
+        body: JSON.stringify({ email: editingEmail.trim() }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setUserManageMessage(data.message || "User email updated successfully.");
+        setEditingEmailId(null);
+        setEditingEmail("");
+        fetchAllUsers(); // Refresh the list
+      } else {
+        const errorData = await res.json().catch(() => ({}));
+        setUserManageError(errorData.message || "Failed to update user email");
+      }
+    } catch (err) {
+      console.error("Failed to update user email:", err);
+      setUserManageError("Failed to update user email. Please try again.");
+    }
+  };
+
   const getRoleDisplayName = (role) => {
     switch (role) {
       case "SUPER_ADMIN":
@@ -304,6 +354,19 @@ function Settings() {
       return;
     }
 
+    // Validate email
+    if (!newEmail.trim()) {
+      setUserError("Please enter an email address.");
+      return;
+    }
+
+    // Basic email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(newEmail.trim())) {
+      setUserError("Please enter a valid email address.");
+      return;
+    }
+
     setIsSubmittingUser(true);
     try {
       let endpoint;
@@ -315,6 +378,7 @@ function Settings() {
         body = {
           customer_name: newUsername.trim(),
           password: newPassword.trim(),
+          email: newEmail.trim(),
         };
       } else {
         // For reviewer, admin, superadmin
@@ -322,6 +386,7 @@ function Settings() {
         body = {
           username: newUsername.trim(),
           password: newPassword.trim(),
+          email: newEmail.trim(),
         };
       }
 
@@ -353,6 +418,7 @@ function Settings() {
         setUserType("");
         setNewUsername("");
         setNewPassword("");
+        setNewEmail("");
         // Refresh users list
         fetchAllUsers();
       }
@@ -436,6 +502,17 @@ function Settings() {
               onChange={(e) => setNewPassword(e.target.value)}
               style={styles.input}
               placeholder="Enter password"
+            />
+          </div>
+
+          <div style={styles.fieldGroup}>
+            <label style={styles.fieldLabel}>Email</label>
+            <input
+              type="email"
+              value={newEmail}
+              onChange={(e) => setNewEmail(e.target.value)}
+              style={styles.input}
+              placeholder="Enter email address"
             />
           </div>
 
@@ -549,6 +626,7 @@ function Settings() {
                         <tr>
                           <th style={styles.tableHeader}>Username</th>
                           <th style={styles.tableHeader}>Role</th>
+                          <th style={styles.tableHeader}>Email</th>
                           <th style={styles.tableHeader}>Status</th>
                           <th style={styles.tableHeader}>Action</th>
                         </tr>
@@ -558,6 +636,75 @@ function Settings() {
                           <tr key={user.id} style={styles.tableRow}>
                             <td style={styles.tableCell}>{user.username}</td>
                             <td style={styles.tableCell}>{getRoleDisplayName(user.role)}</td>
+                            <td style={styles.tableCell}>
+                              {editingEmailId === user.id ? (
+                                <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                                  <input
+                                    type="email"
+                                    value={editingEmail}
+                                    onChange={(e) => setEditingEmail(e.target.value)}
+                                    style={{
+                                      ...styles.input,
+                                      padding: "4px 8px",
+                                      fontSize: "13px",
+                                      width: "200px",
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        handleSaveEmail(user.id);
+                                      } else if (e.key === "Escape") {
+                                        setEditingEmailId(null);
+                                        setEditingEmail("");
+                                      }
+                                    }}
+                                    autoFocus
+                                  />
+                                  <button
+                                    style={{
+                                      ...styles.toggleButton,
+                                      backgroundColor: "#16a34a",
+                                      padding: "4px 8px",
+                                      fontSize: "11px",
+                                    }}
+                                    onClick={() => handleSaveEmail(user.id)}
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    style={{
+                                      ...styles.toggleButton,
+                                      backgroundColor: "#6b7280",
+                                      padding: "4px 8px",
+                                      fontSize: "11px",
+                                    }}
+                                    onClick={() => {
+                                      setEditingEmailId(null);
+                                      setEditingEmail("");
+                                    }}
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                                  <span>{user.email || "-"}</span>
+                                  <button
+                                    style={{
+                                      ...styles.toggleButton,
+                                      backgroundColor: "#2563eb",
+                                      padding: "4px 8px",
+                                      fontSize: "11px",
+                                    }}
+                                    onClick={() => {
+                                      setEditingEmailId(user.id);
+                                      setEditingEmail(user.email || "");
+                                    }}
+                                  >
+                                    Edit
+                                  </button>
+                                </div>
+                              )}
+                            </td>
                             <td style={styles.tableCell}>
                               <span
                                 style={{

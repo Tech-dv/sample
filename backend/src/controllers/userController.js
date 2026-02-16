@@ -1,16 +1,29 @@
 const pool = require("../config/database");
+const { validateEmail } = require("../utils/emailValidator");
 
 const createReviewer = async (req, res) => {
-  const { username, password } = req.body || {};
+  const { username, password, email } = req.body || {};
 
   if (!username || !username.trim() || !password || !password.trim()) {
     return res.status(400).json({ message: "username and password are required" });
   }
 
+  // Validate email
+  if (!email || !email.trim()) {
+    return res.status(400).json({ message: "email is required" });
+  }
+
+  const emailValidation = validateEmail(email);
+  if (!emailValidation.isValid) {
+    return res.status(400).json({ message: emailValidation.error });
+  }
+
   const name = username.trim();
   const pwd = password.trim();
+  const normalizedEmail = emailValidation.normalized;
 
   try {
+    // Check for existing username
     const existingUser = await pool.query(
       "SELECT 1 FROM users WHERE username = $1",
       [name]
@@ -19,12 +32,21 @@ const createReviewer = async (req, res) => {
       return res.status(409).json({ message: "Username already exists" });
     }
 
+    // Check for existing email
+    const existingEmail = await pool.query(
+      "SELECT 1 FROM users WHERE email = $1",
+      [normalizedEmail]
+    );
+    if (existingEmail.rows.length > 0) {
+      return res.status(409).json({ message: "Email already exists" });
+    }
+
     await pool.query(
       `
-      INSERT INTO users (username, password, role, customer_id, is_active, created_at)
-      VALUES ($1, $2, 'REVIEWER', NULL, true, NOW())
+      INSERT INTO users (username, password, role, customer_id, is_active, email, created_at)
+      VALUES ($1, $2, 'REVIEWER', NULL, true, $3, NOW())
       `,
-      [name, pwd]
+      [name, pwd, normalizedEmail]
     );
 
     res.status(201).json({ message: "Reviewer user created successfully" });
@@ -35,16 +57,28 @@ const createReviewer = async (req, res) => {
 };
 
 const createAdmin = async (req, res) => {
-  const { username, password } = req.body || {};
+  const { username, password, email } = req.body || {};
 
   if (!username || !username.trim() || !password || !password.trim()) {
     return res.status(400).json({ message: "username and password are required" });
   }
 
+  // Validate email
+  if (!email || !email.trim()) {
+    return res.status(400).json({ message: "email is required" });
+  }
+
+  const emailValidation = validateEmail(email);
+  if (!emailValidation.isValid) {
+    return res.status(400).json({ message: emailValidation.error });
+  }
+
   const name = username.trim();
   const pwd = password.trim();
+  const normalizedEmail = emailValidation.normalized;
 
   try {
+    // Check for existing username
     const existingUser = await pool.query(
       "SELECT 1 FROM users WHERE username = $1",
       [name]
@@ -53,12 +87,21 @@ const createAdmin = async (req, res) => {
       return res.status(409).json({ message: "Username already exists" });
     }
 
+    // Check for existing email
+    const existingEmail = await pool.query(
+      "SELECT 1 FROM users WHERE email = $1",
+      [normalizedEmail]
+    );
+    if (existingEmail.rows.length > 0) {
+      return res.status(409).json({ message: "Email already exists" });
+    }
+
     await pool.query(
       `
-      INSERT INTO users (username, password, role, customer_id, is_active, created_at)
-      VALUES ($1, $2, 'ADMIN', NULL, true, NOW())
+      INSERT INTO users (username, password, role, customer_id, is_active, email, created_at)
+      VALUES ($1, $2, 'ADMIN', NULL, true, $3, NOW())
       `,
-      [name, pwd]
+      [name, pwd, normalizedEmail]
     );
 
     res.status(201).json({ message: "Admin user created successfully" });
@@ -69,16 +112,28 @@ const createAdmin = async (req, res) => {
 };
 
 const createSuperAdmin = async (req, res) => {
-  const { username, password } = req.body || {};
+  const { username, password, email } = req.body || {};
 
   if (!username || !username.trim() || !password || !password.trim()) {
     return res.status(400).json({ message: "username and password are required" });
   }
 
+  // Validate email
+  if (!email || !email.trim()) {
+    return res.status(400).json({ message: "email is required" });
+  }
+
+  const emailValidation = validateEmail(email);
+  if (!emailValidation.isValid) {
+    return res.status(400).json({ message: emailValidation.error });
+  }
+
   const name = username.trim();
   const pwd = password.trim();
+  const normalizedEmail = emailValidation.normalized;
 
   try {
+    // Check for existing username
     const existingUser = await pool.query(
       "SELECT 1 FROM users WHERE username = $1",
       [name]
@@ -87,12 +142,21 @@ const createSuperAdmin = async (req, res) => {
       return res.status(409).json({ message: "Username already exists" });
     }
 
+    // Check for existing email
+    const existingEmail = await pool.query(
+      "SELECT 1 FROM users WHERE email = $1",
+      [normalizedEmail]
+    );
+    if (existingEmail.rows.length > 0) {
+      return res.status(409).json({ message: "Email already exists" });
+    }
+
     await pool.query(
       `
-      INSERT INTO users (username, password, role, customer_id, is_active, created_at)
-      VALUES ($1, $2, 'SUPER_ADMIN', NULL, true, NOW())
+      INSERT INTO users (username, password, role, customer_id, is_active, email, created_at)
+      VALUES ($1, $2, 'SUPER_ADMIN', NULL, true, $3, NOW())
       `,
-      [name, pwd]
+      [name, pwd, normalizedEmail]
     );
 
     res.status(201).json({ message: "Super Admin user created successfully" });
@@ -120,6 +184,7 @@ const getAllUsers = async (req, res) => {
         u.role,
         u.is_active,
         u.customer_id,
+        u.email,
         u.created_at,
         c.customer_name,
         c.customer_code
@@ -184,10 +249,75 @@ const updateUserStatus = async (req, res) => {
   }
 };
 
+// Update user email
+const updateUserEmail = async (req, res) => {
+  const { userId } = req.params;
+  const { email } = req.body;
+  const role = req.headers["x-user-role"];
+  
+  // Only reviewers can update user email
+  if (role !== "REVIEWER") {
+    return res.status(403).json({ message: "Only reviewers can update user email" });
+  }
+
+  if (!email || typeof email !== 'string' || !email.trim()) {
+    return res.status(400).json({ message: "email is required" });
+  }
+
+  // Validate email format
+  const emailValidation = validateEmail(email);
+  if (!emailValidation.isValid) {
+    return res.status(400).json({ message: emailValidation.error });
+  }
+
+  const normalizedEmail = emailValidation.normalized;
+
+  try {
+    // Check if user exists
+    const userCheck = await pool.query(
+      "SELECT id, email FROM users WHERE id = $1",
+      [userId]
+    );
+
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Check if email is already used by another user
+    const existingEmail = await pool.query(
+      "SELECT id FROM users WHERE email = $1 AND id != $2",
+      [normalizedEmail, userId]
+    );
+    if (existingEmail.rows.length > 0) {
+      return res.status(409).json({ message: "Email already exists" });
+    }
+
+    // Update email
+    const result = await pool.query(
+      `
+      UPDATE users 
+      SET email = $1
+      WHERE id = $2
+      RETURNING id, username, role, email
+      `,
+      [normalizedEmail, userId]
+    );
+
+    res.json({
+      message: "User email updated successfully",
+      user: result.rows[0],
+    });
+  } catch (err) {
+    console.error("UPDATE USER EMAIL ERROR:", err);
+    res.status(500).json({ message: "Failed to update user email" });
+  }
+};
+
 module.exports = {
   createReviewer,
   createAdmin,
   createSuperAdmin,
   getAllUsers,
   updateUserStatus,
+  updateUserEmail,
 };

@@ -8,5 +8,6 @@ router.post("/users/admin", allowRoles(["REVIEWER"]), userController.createAdmin
 router.post("/users/superadmin", allowRoles(["REVIEWER"]), userController.createSuperAdmin);
 router.get("/users", allowRoles(["REVIEWER"]), userController.getAllUsers);
 router.patch("/users/:userId/status", allowRoles(["REVIEWER"]), userController.updateUserStatus);
+router.patch("/users/:userId/email", allowRoles(["REVIEWER"]), userController.updateUserEmail);
 
 module.exports = router;

@@ -95,7 +95,9 @@ const getDashboardData = async (req, res) => {
               LIMIT 1
             ) AS rake_loading_end_actual,
             COALESCE(SUM(w.loaded_bag_count), 0) AS total_bags_loaded,
-            SUM(w.wagon_to_be_loaded) AS total_bags_to_be_loaded
+            SUM(w.wagon_to_be_loaded) AS total_bags_to_be_loaded,
+            COUNT(DISTINCT CASE WHEN w.loaded_bag_count > 0 OR w.loading_status = true THEN w.wagon_number END) AS total_wagons_loaded,
+            COUNT(DISTINCT w.wagon_number) AS number_of_indent_wagons
           FROM dashboard_records d
           JOIN customers c ON c.id = d.customer_id
         LEFT JOIN wagon_records w ON w.rake_serial_number = d.rake_serial_number
