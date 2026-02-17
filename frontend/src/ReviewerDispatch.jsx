@@ -21,11 +21,13 @@ export default function ReviewerDispatch() {
   const reviewerUsername = localStorage.getItem("username");
 
   const [siding, setSiding] = useState("");
+  const [rakeSerialNumber, setRakeSerialNumber] = useState(""); // ✅ FIX: Store actual rake_serial_number from backend
   const [showSuccess, setShowSuccess] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [showCancelPopup, setShowCancelPopup] = useState(false);
   const [cancelRemarks, setCancelRemarks] = useState("");
+  const [indentError, setIndentError] = useState("");
 
   const [form, setForm] = useState({
     indent_wagon_count: "",
@@ -39,6 +41,8 @@ export default function ReviewerDispatch() {
     remarks: "",
     rr_number: "",
     rake_loading_end_railway: "",
+    door_closing_datetime: "",
+    rake_haul_out_datetime: "",
   });
 
   const [originalForm, setOriginalForm] = useState(null);
@@ -136,8 +140,10 @@ export default function ReviewerDispatch() {
         console.log("=== Dispatch data received ===", d);
 
         try {
-          console.log("Step 1: Setting siding");
+          console.log("Step 1: Setting siding and rake serial number");
           setSiding(d.siding || "");
+          // ✅ FIX: Set actual rake_serial_number from backend response (not URL trainId)
+          setRakeSerialNumber(d.rake_serial_number || trainId || "");
 
           if (d.dispatch) {
             console.log("Step 2: Dispatch object exists", d.dispatch);
@@ -149,6 +155,10 @@ export default function ReviewerDispatch() {
             console.log("Clearance date formatted:", clearanceDate);
             const rakeLoadingEndRailwayDate = formatDateTimeLocal(d.dispatch.rake_loading_end_railway);
             console.log("Rake Loading End Railway date formatted:", rakeLoadingEndRailwayDate);
+            
+            // ✅ Load door_closing_datetime and rake_haul_out_datetime into form (now user-editable)
+            const doorClosingDate = formatDateTimeLocal(d.dispatch.door_closing_datetime);
+            const rakeHaulOutDate = formatDateTimeLocal(d.dispatch.rake_haul_out_datetime);
 
             console.log("Step 4: Creating form object");
             const f = {
@@ -163,6 +173,8 @@ export default function ReviewerDispatch() {
               remarks: String(d.dispatch.remarks ?? ""),
               rr_number: String(d.dispatch.rr_number ?? ""),
               rake_loading_end_railway: rakeLoadingEndRailwayDate,
+              door_closing_datetime: doorClosingDate,
+              rake_haul_out_datetime: rakeHaulOutDate,
             };
 
             console.log("Step 5: Form data created:", f);
@@ -205,13 +217,15 @@ export default function ReviewerDispatch() {
             console.log("Step 6: Set form state");
             console.log("Step 7: Set original form state");
 
+            // ✅ FIX: Initialize autoData with dispatch data
+            // Try to get times from dispatch_records first (if they were saved), then fetch from wagons
+            // ✅ FIX: Don't initialize rake_loading_end_actual from dispatch - it will be calculated from wagons
+            // to ensure it only shows when ALL wagons have loading_end_time filled
             const autoDataObj = {
-              rake_loading_start_datetime: String(d.dispatch.rake_loading_start_datetime ?? ""),
-              rake_loading_end_actual: String(d.dispatch.rake_loading_end_actual ?? ""),
-              door_closing_datetime: String(d.dispatch.door_closing_datetime ?? ""),
-              rake_haul_out_datetime: String(d.dispatch.rake_haul_out_datetime ?? ""),
+              rake_loading_start_datetime: d.dispatch.rake_loading_start_datetime || "", // Try dispatch first
+              rake_loading_end_actual: "", // ✅ FIX: Always start empty - will be calculated from wagons
             };
-            console.log("Step 8: Auto data created:", autoDataObj);
+            console.log("Step 8: Auto data created (times from dispatch or will be fetched from wagons):", autoDataObj);
             setAutoData(autoDataObj);
             console.log("Step 9: Set auto data");
           } else {
@@ -236,6 +250,108 @@ export default function ReviewerDispatch() {
 
     // Fetch activity timeline on mount
     fetchActivityTimeline();
+
+    // ✅ FIX: Always fetch times from wagon_records based on indent_number, ordered by tower_number
+    const fetchWagonData = async () => {
+      try {
+        console.log("Fetching wagon data to calculate rake loading times");
+        const wagonUrl = indentNumber 
+          ? `${API_BASE}/train/${encodeURIComponent(trainId)}/view?indent_number=${encodeURIComponent(indentNumber)}`
+          : `${API_BASE}/train/${encodeURIComponent(trainId)}/view`;
+        
+        const response = await fetch(wagonUrl, {
+          headers: {
+            "x-user-role": role || "REVIEWER",
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const wagons = data.wagons || [];
+          
+          if (wagons.length > 0) {
+            // ✅ FIX: Sort wagons by tower_number (ascending)
+            const sortedWagons = [...wagons].sort((a, b) => {
+              const towerA = a.tower_number || 0;
+              const towerB = b.tower_number || 0;
+              return towerA - towerB;
+            });
+            
+            // ✅ FIX: Get first wagon's loading_start_time (ordered by tower_number)
+            const firstWagon = sortedWagons.find(w => w.loading_start_time);
+            const rakeLoadingStart = firstWagon ? firstWagon.loading_start_time : "";
+            
+            // ✅ FIX: Only get last wagon's loading_end_time if ALL wagons have loading_end_time filled
+            const totalWagons = sortedWagons.length;
+            // ✅ FIX: More robust check - ensure loading_end_time exists, is not null/undefined, and is not empty
+            const wagonsWithEndTime = sortedWagons.filter(w => {
+              const endTime = w.loading_end_time;
+              return endTime != null && String(endTime).trim() !== "";
+            }).length;
+            
+            let rakeLoadingEnd = "";
+            // ✅ FIX: Only set if ALL wagons have loading_end_time AND we have wagons
+            if (totalWagons > 0 && wagonsWithEndTime === totalWagons) {
+              // All wagons have loading_end_time filled - get the last wagon's time (by tower_number)
+              const lastWagon = sortedWagons[sortedWagons.length - 1];
+              if (lastWagon && lastWagon.loading_end_time) {
+                rakeLoadingEnd = String(lastWagon.loading_end_time).trim();
+              }
+            }
+            // If not all wagons have loading_end_time, keep rakeLoadingEnd as empty string
+            
+            // ✅ FIX: Update autoData with fetched values from wagons
+            // Prefer fetched values from wagons (most accurate), but don't overwrite if previous has value and fetched is empty
+            setAutoData(prev => {
+              const newData = {
+                ...prev,
+                // Use fetched value if available, otherwise keep previous value (which might be from dispatch_records)
+                rake_loading_start_datetime: rakeLoadingStart || prev.rake_loading_start_datetime || "",
+                // ✅ FIX: Only set rake_loading_end_actual if ALL wagons have loading_end_time filled
+                // If not all wagons have it, always set to empty string (don't preserve previous value)
+                // This ensures the field is always recalculated from current wagon data, never preserved from previous state
+                rake_loading_end_actual: (wagonsWithEndTime === totalWagons && rakeLoadingEnd && rakeLoadingEnd.trim() !== "") ? rakeLoadingEnd : "",
+              };
+            
+              console.log("Updating autoData with wagon times:", {
+                fetchedFromWagons: {
+                  rake_loading_start_datetime: rakeLoadingStart,
+                  rake_loading_end_actual: rakeLoadingEnd,
+                },
+                previousState: {
+                  rake_loading_start_datetime: prev.rake_loading_start_datetime,
+                  rake_loading_end_actual: prev.rake_loading_end_actual,
+                },
+                finalState: newData,
+                indentNumber: indentNumber || "none",
+                wagonCount: wagons.length,
+                totalWagons: totalWagons,
+                wagonsWithEndTime: wagonsWithEndTime,
+                allWagonsHaveEndTime: wagonsWithEndTime === totalWagons
+              });
+              
+              return newData;
+            });
+          } else {
+            // No wagons found - clear the times
+            setAutoData(prev => ({
+              ...prev,
+              rake_loading_start_datetime: "",
+              rake_loading_end_actual: "",
+            }));
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load wagon data:", err);
+      }
+    };
+
+    // ✅ FIX: Add delay to ensure dispatch data is loaded first, and backend save completes
+    // Increased delay to ensure wagon data is saved after proceed button click from TrainEdit
+    // Increased from 500ms to 1000ms to give backend enough time to process and save all data
+    setTimeout(() => {
+      fetchWagonData();
+    }, 1000);
   }, [trainId, indentNumber, role, reviewerUsername]);
 
   /* ================= REFRESH ACTIVITY TIMELINE ON VISIBILITY CHANGE ================= */
@@ -300,6 +416,76 @@ export default function ReviewerDispatch() {
     }
   }, [role]);
 
+  /* ================= HELPER: Format DateTime for display ================= */
+  const formatDateTime = (dateTimeString) => {
+    if (!dateTimeString) return "-";
+    try {
+      const date = new Date(dateTimeString);
+      
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        console.warn("Invalid date:", dateTimeString);
+        return "-";
+      }
+      
+      // Get date parts (local timezone)
+      const month = date.getMonth() + 1; // 1-12
+      const day = date.getDate(); // 1-31
+      const year = date.getFullYear();
+      
+      // Get time parts (24-hour format, local timezone)
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      const seconds = String(date.getSeconds()).padStart(2, '0');
+      
+      // Format: M/D/YYYY, HH:mm:ss (24-hour format, local timezone)
+      return `${month}/${day}/${year}, ${hours}:${minutes}:${seconds}`;
+    } catch (e) {
+      console.error("Error formatting date:", dateTimeString, e);
+      return "-";
+    }
+  };
+
+  /* ================= FORMAT FILENAME FROM RAKE SERIAL NUMBER ================= */
+  const formatRakeSerialFilename = (rakeSerial) => {
+    if (!rakeSerial) return `${trainId}_changes.xlsx`;
+    
+    // Parse rake_serial_number format: "2025-26/02/001"
+    // Expected output: "2025-26_feb_001_changes.xlsx"
+    const parts = rakeSerial.split('/');
+    if (parts.length === 3) {
+      const yearPart = parts[0]; // "2025-26"
+      const monthNum = parts[1]; // "02"
+      const serialPart = parts[2]; // "001"
+      
+      // Convert month number to short month name
+      const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 
+                          'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+      const monthIndex = parseInt(monthNum, 10) - 1;
+      const monthShort = (monthIndex >= 0 && monthIndex < 12) 
+        ? monthNames[monthIndex] 
+        : monthNum.toLowerCase();
+      
+      return `${yearPart}_${monthShort}_${serialPart}_changes.xlsx`;
+    }
+    
+    // Fallback to original format if parsing fails
+    return `${rakeSerial}_changes.xlsx`;
+  };
+
+  /* ================= INPUT HANDLERS ================= */
+  const handleIndentWagonChange = (v) => {
+    setForm({ ...form, indent_wagon_count: v });
+
+    if (v === "") {
+      setIndentError("");
+    } else if (!/^[0-9]+$/.test(v)) {
+      setIndentError("Please enter a number (digits only).");
+    } else {
+      setIndentError("");
+    }
+  };
+
   /* ================= UTILS ================= */
   const getChangedFields = () => {
     // Currently unused for saving, but kept for potential diagnostics.
@@ -321,6 +507,7 @@ export default function ReviewerDispatch() {
     return (
       form.indent_wagon_count &&
       form.indent_wagon_count.trim() !== "" &&
+      !indentError &&
       form.vessel_name &&
       form.vessel_name.trim() !== "" &&
       form.rake_type &&
@@ -339,6 +526,8 @@ export default function ReviewerDispatch() {
       form.remarks.trim() !== "" &&
       form.rake_loading_end_railway &&
       form.rake_loading_end_railway.trim() !== "" &&
+      form.door_closing_datetime &&
+      form.door_closing_datetime.trim() !== "" &&
       form.rr_number &&
       form.rr_number.trim() !== ""
     );
@@ -418,54 +607,6 @@ export default function ReviewerDispatch() {
 
       // ✅ FIX: Refresh activity timeline after submission
       fetchActivityTimeline();
-
-      // ✅ FIX: Auto-download Excel file after successful submit
-      try {
-        const role = localStorage.getItem("role");
-        const url = `${API_BASE}/train/${encodeURIComponent(trainId)}/export-all-reviewer-changes`;
-        
-        const response = await fetch(url, {
-          headers: {
-            "x-user-role": role || "REVIEWER",
-          },
-        });
-
-        if (response.ok) {
-          // Get the blob from response
-          const blob = await response.blob();
-          
-          // Extract filename from Content-Disposition header, or use default
-          const contentDisposition = response.headers.get('Content-Disposition');
-          let filename = `${trainId}_changes.xlsx`;
-          if (contentDisposition) {
-            const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
-            if (filenameMatch) {
-              filename = filenameMatch[1];
-            }
-          }
-          
-          // Create a temporary URL for the blob
-          const blobUrl = window.URL.createObjectURL(blob);
-          
-          // Create a temporary anchor element and trigger download
-          const link = document.createElement('a');
-          link.href = blobUrl;
-          link.download = filename;
-          document.body.appendChild(link);
-          link.click();
-          
-          // Clean up
-          document.body.removeChild(link);
-          window.URL.revokeObjectURL(blobUrl);
-        } else {
-          // If no changes found, that's okay - just continue
-          const errorData = await response.json().catch(() => ({ message: "No changes to export" }));
-          console.log("Excel export:", errorData.message || "No changes found");
-        }
-      } catch (err) {
-        // Don't block success if Excel download fails
-        console.error("Excel download error:", err);
-      }
 
       setShowSuccess(true);
     } else {
@@ -557,15 +698,19 @@ export default function ReviewerDispatch() {
           <div style={pdf.formContainer}>
             <div style={pdf.grid}>
               <Field label="Source" value="KSLK" readOnly />
-              <Field label="Rake Serial Number" value={trainId} readOnly />
+              <Field label="Rake Serial Number" value={rakeSerialNumber || trainId} readOnly />
               <Field label="Siding" value={siding} readOnly />
 
-              <Field label="Number of Indent Wagons" value={form.indent_wagon_count}
-                onChange={(v) => setForm({ ...form, indent_wagon_count: v })}
-                required />
+              <Field
+                label="Number of Indent Wagons"
+                value={form.indent_wagon_count}
+                onChange={handleIndentWagonChange}
+                required
+                error={indentError}
+              />
 
               <Field label="Vessel Name" value={form.vessel_name}
-                onChange={(v) => setForm({ ...form, vessel_name: v })}
+                onChange={(v) => setForm({ ...form, vessel_name: v })} 
                 required />
 
               <Field
@@ -593,8 +738,8 @@ export default function ReviewerDispatch() {
                 onChange={(v) => setForm({ ...form, rake_idle_time: v })}
                 required />
 
-              <Field label="Rake Loading Start Date & Time" value={autoData.rake_loading_start_datetime} readOnly />
-              <Field label="Rake Loading End Date & Time Actual" value={autoData.rake_loading_end_actual} readOnly />
+              <Field label="Rake Loading Start Date & Time" value={formatDateTime(autoData.rake_loading_start_datetime)} readOnly />
+              <Field label="Rake Loading End Date & Time Actual" value={formatDateTime(autoData.rake_loading_end_actual)} readOnly />
               <Field
                 type="datetime-local"
                 label="Rake Loading End Date & Time Railway"
@@ -603,8 +748,19 @@ export default function ReviewerDispatch() {
                 required
               />
 
-              <Field label="Door Closing Date & Time" value={autoData.door_closing_datetime} readOnly />
-              <Field label="Rake Haul Out Date & Time" value={autoData.rake_haul_out_datetime} readOnly />
+              <Field 
+                type="datetime-local" 
+                label="Door Closing Date & Time" 
+                value={form.door_closing_datetime}
+                onChange={(v) => setForm({ ...form, door_closing_datetime: v })}
+                required 
+              />
+              <Field 
+                type="datetime-local" 
+                label="Rake Haul Out Date & Time" 
+                value={form.rake_haul_out_datetime}
+                onChange={(v) => setForm({ ...form, rake_haul_out_datetime: v })}
+              />
             </div>
           </div>
 
@@ -693,15 +849,8 @@ export default function ReviewerDispatch() {
                                       // Get the blob from response
                                       const blob = await response.blob();
                                       
-                                      // Extract filename from Content-Disposition header, or use default
-                                      const contentDisposition = response.headers.get('Content-Disposition');
-                                      let filename = `${trainId}_changes.xlsx`;
-                                      if (contentDisposition) {
-                                        const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
-                                        if (filenameMatch) {
-                                          filename = filenameMatch[1];
-                                        }
-                                      }
+                                      // Format filename from rake_serial_number
+                                      const filename = formatRakeSerialFilename(rakeSerialNumber || trainId);
                                       
                                       // Create a temporary URL for the blob
                                       const blobUrl = window.URL.createObjectURL(blob);
@@ -771,7 +920,7 @@ export default function ReviewerDispatch() {
             required />
 
           <Field label="RR Number" value={form.rr_number}
-            onChange={(v) => setForm({ ...form, rr_number: v })}
+            onChange={(v) => setForm({ ...form, rr_number: v })} 
             required />
         </div>
 
@@ -843,7 +992,7 @@ export default function ReviewerDispatch() {
 }
 
 /* ================= CUSTOM DATETIME FIELD (24-HOUR FORMAT) ================= */
-function DateTimeField24({ label, value, onChange, readOnly, required = false }) {
+function DateTimeField24({ label, value, onChange, readOnly, required = false, error }) {
   const [localTime, setLocalTime] = useState("");
 
   // Parse the datetime-local value (YYYY-MM-DDTHH:mm:ss) into date and time parts
@@ -892,6 +1041,34 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false })
     onChange && onChange(newValue);
   };
 
+  const handleDateFocus = (e) => {
+    // ✅ FIX: If date is empty, automatically fill with today's date
+    if (!date || date.trim() === "") {
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      const dateToday = `${year}-${month}-${day}`;
+      const currentTime = localTime || time || "00:00:00";
+      const newValue = combineDateTime(dateToday, currentTime);
+      onChange && onChange(newValue);
+    }
+  };
+
+  const handleDateClick = (e) => {
+    // ✅ FIX: If date is empty, automatically fill with today's date when clicked
+    if (!date || date.trim() === "") {
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      const dateToday = `${year}-${month}-${day}`;
+      const currentTime = localTime || time || "00:00:00";
+      const newValue = combineDateTime(dateToday, currentTime);
+      onChange && onChange(newValue);
+    }
+  };
+
   const handleTimeChange = (e) => {
     let newTime = e.target.value;
 
@@ -915,12 +1092,21 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false })
     // Update local state immediately for responsive typing
     setLocalTime(newTime);
 
-    // Update parent only if we have a date (user can type time even without date, but won't save until date is set)
-    if (date) {
-      const newValue = combineDateTime(date, newTime);
+    // ✅ FIX: If date is empty when typing time, automatically set it to today's date
+    let dateToUse = date;
+    if (!date || date.trim() === "") {
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      dateToUse = `${year}-${month}-${day}`;
+    }
+    
+    // Update parent with date (today if empty) and time
+    if (dateToUse) {
+      const newValue = combineDateTime(dateToUse, newTime);
       onChange && onChange(newValue);
     }
-    // If no date, just update local state - user can still type time
   };
 
   const handleTimeBlur = () => {
@@ -965,6 +1151,9 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false })
           value={date}
           readOnly={readOnly}
           onChange={handleDateChange}
+          onFocus={handleDateFocus}
+          onClick={handleDateClick}
+          min="2026-01-01"
           style={{
             ...field.input,
             background: readOnly ? "#f4f4f4" : "white",
@@ -990,12 +1179,17 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false })
           title="Enter time in 24-hour format (HH:mm:ss), e.g., 13:30:00 for 1:30 PM"
         />
       </div>
+      {error && (
+        <div style={{ marginTop: "4px", fontSize: "12px", color: "#d32f2f" }}>
+          {error}
+        </div>
+      )}
     </fieldset>
   );
 }
 
 /* ================= FIELD ================= */
-function Field({ label, value, onChange, readOnly, type = "text", required = false, selectOptions }) {
+function Field({ label, value, onChange, readOnly, type = "text", required = false, selectOptions, error }) {
   // ✅ For datetime-local, use custom DateTimeField24 component to ensure 24-hour format display
   if (type === "datetime-local") {
     return (
@@ -1005,6 +1199,7 @@ function Field({ label, value, onChange, readOnly, type = "text", required = fal
         onChange={onChange}
         readOnly={readOnly}
         required={required}
+        error={error}
       />
     );
   }
@@ -1044,6 +1239,11 @@ function Field({ label, value, onChange, readOnly, type = "text", required = fal
             background: readOnly ? "#f4f4f4" : "white",
           }}
         />
+      )}
+      {error && (
+        <div style={{ marginTop: "4px", fontSize: "12px", color: "#d32f2f" }}>
+          {error}
+        </div>
       )}
     </fieldset>
   );

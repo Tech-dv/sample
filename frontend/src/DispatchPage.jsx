@@ -238,21 +238,22 @@ export default function DispatchPage() {
 
             // ✅ FIX: Initialize autoData with dispatch data
             // Try to get times from dispatch_records first (if they were saved), then fetch from wagons
+            // ✅ FIX: Don't initialize rake_loading_end_actual from dispatch - it will be calculated from wagons
+            // to ensure it only shows when ALL wagons have loading_end_time filled
             const autoDataObj = {
               rake_loading_start_datetime: d.dispatch.rake_loading_start_datetime || "", // Try dispatch first
-              rake_loading_end_actual: d.dispatch.rake_loading_end_actual || "", // Try dispatch first
+              rake_loading_end_actual: "", // ✅ FIX: Always start empty - will be calculated from wagons
             };
             
             // ✅ FIX: Merge with saved autoData from localStorage if available
             if (savedAutoData) {
               console.log("Found saved autoData from localStorage, merging");
-              // Preserve loading times from localStorage if they exist (they might be more recent)
+              // Preserve loading start time from localStorage if it exists (they might be more recent)
               if (savedAutoData.rake_loading_start_datetime && savedAutoData.rake_loading_start_datetime.trim() !== "") {
                 autoDataObj.rake_loading_start_datetime = savedAutoData.rake_loading_start_datetime;
               }
-              if (savedAutoData.rake_loading_end_actual && savedAutoData.rake_loading_end_actual.trim() !== "") {
-                autoDataObj.rake_loading_end_actual = savedAutoData.rake_loading_end_actual;
-              }
+              // ✅ FIX: Don't preserve rake_loading_end_actual from localStorage - it will be recalculated from wagons
+              // to ensure it only shows when ALL wagons have loading_end_time filled
             }
             
             console.log("Step 8: Auto data created (times from dispatch or will be fetched from wagons):", autoDataObj);
@@ -344,9 +345,24 @@ export default function DispatchPage() {
             const firstWagon = sortedWagons.find(w => w.loading_start_time);
             const rakeLoadingStart = firstWagon ? firstWagon.loading_start_time : "";
             
-            // ✅ FIX: Get last wagon's loading_end_time (ordered by tower_number)
-            const lastWagon = [...sortedWagons].reverse().find(w => w.loading_end_time);
-            const rakeLoadingEnd = lastWagon ? lastWagon.loading_end_time : "";
+            // ✅ FIX: Only get last wagon's loading_end_time if ALL wagons have loading_end_time filled
+            const totalWagons = sortedWagons.length;
+            // ✅ FIX: More robust check - ensure loading_end_time exists, is not null/undefined, and is not empty
+            const wagonsWithEndTime = sortedWagons.filter(w => {
+              const endTime = w.loading_end_time;
+              return endTime != null && String(endTime).trim() !== "";
+            }).length;
+            
+            let rakeLoadingEnd = "";
+            // ✅ FIX: Only set if ALL wagons have loading_end_time AND we have wagons
+            if (totalWagons > 0 && wagonsWithEndTime === totalWagons) {
+              // All wagons have loading_end_time filled - get the last wagon's time (by tower_number)
+              const lastWagon = sortedWagons[sortedWagons.length - 1];
+              if (lastWagon && lastWagon.loading_end_time) {
+                rakeLoadingEnd = String(lastWagon.loading_end_time).trim();
+              }
+            }
+            // If not all wagons have loading_end_time, keep rakeLoadingEnd as empty string
             
             // ✅ FIX: Update autoData with fetched values from wagons
             // Prefer fetched values from wagons (most accurate), but don't overwrite if previous has value and fetched is empty
@@ -355,7 +371,10 @@ export default function DispatchPage() {
               ...prev,
                 // Use fetched value if available, otherwise keep previous value (which might be from dispatch_records)
                 rake_loading_start_datetime: rakeLoadingStart || prev.rake_loading_start_datetime || "",
-                rake_loading_end_actual: rakeLoadingEnd || prev.rake_loading_end_actual || "",
+                // ✅ FIX: Only set rake_loading_end_actual if ALL wagons have loading_end_time filled
+                // If not all wagons have it, always set to empty string (don't preserve previous value)
+                // This ensures the field is always recalculated from current wagon data, never preserved from previous state
+                rake_loading_end_actual: (wagonsWithEndTime === totalWagons && rakeLoadingEnd && rakeLoadingEnd.trim() !== "") ? rakeLoadingEnd : "",
               };
             
               console.log("Updating autoData with wagon times:", {
@@ -370,7 +389,9 @@ export default function DispatchPage() {
                 finalState: newData,
                 indentNumber: indentNumber || "none",
                 wagonCount: wagons.length,
-                wagonsWithTimes: wagons.filter(w => w.loading_start_time || w.loading_end_time).length
+                totalWagons: totalWagons,
+                wagonsWithEndTime: wagonsWithEndTime,
+                allWagonsHaveEndTime: wagonsWithEndTime === totalWagons
               });
               
               return newData;
@@ -1570,10 +1591,24 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
   };
 
   const handleDateFocus = (e) => {
-    // Ensure format is "00/00/0000" when focused if empty or invalid
+    // ✅ FIX: If date is "00/00/0000" or empty, automatically fill with today's date
     const currentDate = localDate || "";
-    if (!currentDate || !currentDate.includes('/') || currentDate.split('/').length !== 3) {
-      setLocalDate("00/00/0000");
+    if (!currentDate || currentDate === "00/00/0000" || !currentDate.includes('/') || currentDate.split('/').length !== 3) {
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      const dateStorage = `${year}-${month}-${day}`;
+      const dateDisplayToday = `${day}/${month}/${year}`;
+      setLocalDate(dateDisplayToday);
+      setSelectedDate(today); // Also update selectedDate for calendar
+      setCalendarDate(today); // Also update calendarDate for calendar
+      
+      // Update the combined value immediately
+      const currentTime = localTime || time || "00:00:00";
+      const newValue = combineDateTime(dateStorage, currentTime);
+      onChange && onChange(newValue);
+      
       setTimeout(() => {
         e.target.setSelectionRange(0, 0); // Position cursor at start
       }, 0);
@@ -1582,6 +1617,25 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
 
   const handleDateInputClick = () => {
     if (!readOnly) {
+      // ✅ FIX: If date is "00/00/0000" or empty, automatically fill with today's date
+      const currentDate = localDate || dateDisplay || "";
+      if (!currentDate || currentDate === "00/00/0000" || currentDate.trim() === "") {
+        const today = new Date();
+        const year = today.getFullYear();
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const day = String(today.getDate()).padStart(2, '0');
+        const dateStorage = `${year}-${month}-${day}`;
+        const dateDisplayToday = `${day}/${month}/${year}`;
+        setLocalDate(dateDisplayToday);
+        setSelectedDate(today); // Also update selectedDate for calendar
+        setCalendarDate(today); // Also update calendarDate for calendar
+        
+        // Update the combined value immediately
+        const currentTime = localTime || time || "00:00:00";
+        const newValue = combineDateTime(dateStorage, currentTime);
+        onChange && onChange(newValue);
+      }
+      
       setShowCalendar(true);
       // Initialize calendar with current value or today
       if (value) {
@@ -1649,9 +1703,9 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
   };
 
   const getAllYears = () => {
-    // Generate array of years: 100 years before current year to 50 years after
+    // Generate array of years: starting from 2026 to 50 years after current year
     const currentYear = new Date().getFullYear();
-    const startYear = currentYear - 100;
+    const startYear = 2026;
     const endYear = currentYear + 50;
     return Array.from({ length: endYear - startYear + 1 }, (_, i) => startYear + i);
   };
@@ -1963,6 +2017,18 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
     
     // Handle number key press - replace digit at current position
     if (e.key >= '0' && e.key <= '9') {
+      // ✅ FIX: If date is empty or "00/00/0000", set it to today's date before processing time input
+      const currentDate = localDate || dateDisplay || "";
+      if (!currentDate || currentDate === "00/00/0000" || currentDate.trim() === "") {
+        const today = new Date();
+        const year = today.getFullYear();
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const day = String(today.getDate()).padStart(2, '0');
+        const dateStorage = `${year}-${month}-${day}`;
+        const dateDisplayToday = `${day}/${month}/${year}`;
+        setLocalDate(dateDisplayToday);
+      }
+      
           e.preventDefault();
       
       let newHours = hours;
@@ -2072,8 +2138,18 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
       setLocalTime(formattedTime);
       
       // Update the combined datetime value
-      if (date) {
-        const newValue = combineDateTime(date, formattedTime);
+      // ✅ FIX: Use the updated date (may have been set to today's date above)
+      const currentDateForCombine = localDate || dateDisplay || "";
+      let dateForCombine = date;
+      if (!currentDateForCombine || currentDateForCombine === "00/00/0000" || currentDateForCombine.trim() === "") {
+        const today = new Date();
+        const year = today.getFullYear();
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const day = String(today.getDate()).padStart(2, '0');
+        dateForCombine = `${year}-${month}-${day}`;
+      }
+      if (dateForCombine) {
+        const newValue = combineDateTime(dateForCombine, formattedTime);
         onChange && onChange(newValue);
       }
       
@@ -2158,8 +2234,18 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
       setLocalTime(formattedTime);
       
       // Update the combined datetime value
-      if (date) {
-        const newValue = combineDateTime(date, formattedTime);
+      // ✅ FIX: Use the updated date (may have been set to today's date above)
+      const currentDateForCombine = localDate || dateDisplay || "";
+      let dateForCombine = date;
+      if (!currentDateForCombine || currentDateForCombine === "00/00/0000" || currentDateForCombine.trim() === "") {
+        const today = new Date();
+        const year = today.getFullYear();
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const day = String(today.getDate()).padStart(2, '0');
+        dateForCombine = `${year}-${month}-${day}`;
+      }
+      if (dateForCombine) {
+        const newValue = combineDateTime(dateForCombine, formattedTime);
         onChange && onChange(newValue);
       }
       
@@ -2203,8 +2289,18 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
       setLocalTime(formattedTime);
       
       // Update the combined datetime value
-      if (date) {
-        const newValue = combineDateTime(date, formattedTime);
+      // ✅ FIX: Use the updated date (may have been set to today's date above)
+      const currentDateForCombine = localDate || dateDisplay || "";
+      let dateForCombine = date;
+      if (!currentDateForCombine || currentDateForCombine === "00/00/0000" || currentDateForCombine.trim() === "") {
+        const today = new Date();
+        const year = today.getFullYear();
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const day = String(today.getDate()).padStart(2, '0');
+        dateForCombine = `${year}-${month}-${day}`;
+      }
+      if (dateForCombine) {
+        const newValue = combineDateTime(dateForCombine, formattedTime);
         onChange && onChange(newValue);
       }
       
@@ -2213,6 +2309,22 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
   };
 
   const handleTimeFocus = (e) => {
+    // ✅ FIX: If date is empty or "00/00/0000", set it to today's date
+    const currentDate = localDate || dateDisplay || "";
+    if (!currentDate || currentDate === "00/00/0000" || currentDate.trim() === "") {
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      const dateStorage = `${year}-${month}-${day}`;
+      const dateDisplayToday = `${day}/${month}/${year}`;
+      setLocalDate(dateDisplayToday);
+      // Update the combined datetime value with today's date
+      const currentTime = localTime || time || "00:00:00";
+      const newValue = combineDateTime(dateStorage, currentTime);
+      onChange && onChange(newValue);
+    }
+    
     // Ensure format is "00:00:00" when focused if empty or invalid
     const currentTime = localTime || time || "";
     if (!currentTime || !currentTime.includes(':') || currentTime.split(':').length !== 3) {

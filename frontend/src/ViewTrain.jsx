@@ -218,24 +218,8 @@ function ViewTrain() {
     }
   };
 
-  // ✅ FIX: Calculate loading status using same rules as TrainEdit.jsx
-  // Status is true when loaded_bag_count >= wagon_to_be_loaded
-  // If wagon_to_be_loaded is null (not filled), status must be false
-  const calculateLoadingStatus = (wagon) => {
-    const wagonToBeLoadedValue = wagon.wagon_to_be_loaded != null ? String(wagon.wagon_to_be_loaded) : "";
-    const wagonToBeLoaded = wagonToBeLoadedValue && wagonToBeLoadedValue.trim() !== ""
-      ? Number(wagonToBeLoadedValue)
-      : null;
-    const loadedBagCount = Number(wagon.loaded_bag_count) || 0;
-    
-    // If wagon_to_be_loaded is null (not filled), status must be false (can't compare null)
-    if (wagonToBeLoaded == null) {
-      return false;
-    }
-    
-    // Status is true if loaded_bag_count >= wagon_to_be_loaded
-    return loadedBagCount >= wagonToBeLoaded;
-  };
+  // ✅ FIX: Use loading_status directly from database (no calculation needed)
+  // The backend returns loading_status field from wagon_records table
 
   return (
     <AppShell>
@@ -414,7 +398,7 @@ function ViewTrain() {
                           style={{
                             width: "46px",
                             height: "24px",
-                            backgroundColor: calculateLoadingStatus(w) ? "#4CAF50" : "#ccc",
+                            backgroundColor: w.loading_status ? "#4CAF50" : "#5a5a5aff",
                             borderRadius: "24px",
                             position: "relative",
                             margin: "0 auto",
@@ -428,7 +412,7 @@ function ViewTrain() {
                               borderRadius: "50%",
                               position: "absolute",
                               top: "2px",
-                              left: calculateLoadingStatus(w) ? "24px" : "2px",
+                              left: w.loading_status ? "24px" : "2px",
                               boxShadow: "0 2px 5px rgba(0,0,0,0.3)",
                             }}
                           />
