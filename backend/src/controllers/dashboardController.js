@@ -86,13 +86,31 @@ const getDashboardData = async (req, res) => {
               LIMIT 1
             ) AS rake_loading_start_datetime,
             (
-              SELECT w_last.loading_end_time
-              FROM wagon_records w_last
-            WHERE w_last.rake_serial_number = d.rake_serial_number
-                AND (d.single_indent = true OR w_last.indent_number = d.indent_number)
-                AND w_last.loading_end_time IS NOT NULL
-              ORDER BY w_last.tower_number DESC
-              LIMIT 1
+              -- ✅ FIX: Only return loading_end_time if ALL wagons have it filled
+              CASE 
+                WHEN (
+                  SELECT COUNT(*) 
+                  FROM wagon_records w_all
+                  WHERE w_all.rake_serial_number = d.rake_serial_number
+                    AND (d.single_indent = true OR w_all.indent_number = d.indent_number)
+                ) = (
+                  SELECT COUNT(*) 
+                  FROM wagon_records w_filled
+                  WHERE w_filled.rake_serial_number = d.rake_serial_number
+                    AND (d.single_indent = true OR w_filled.indent_number = d.indent_number)
+                    AND w_filled.loading_end_time IS NOT NULL
+                )
+                THEN (
+                  SELECT w_last.loading_end_time
+                  FROM wagon_records w_last
+                  WHERE w_last.rake_serial_number = d.rake_serial_number
+                    AND (d.single_indent = true OR w_last.indent_number = d.indent_number)
+                    AND w_last.loading_end_time IS NOT NULL
+                  ORDER BY w_last.tower_number DESC
+                  LIMIT 1
+                )
+                ELSE NULL
+              END
             ) AS rake_loading_end_actual,
             COALESCE(SUM(w.loaded_bag_count), 0) AS total_bags_loaded,
             SUM(w.wagon_to_be_loaded) AS total_bags_to_be_loaded,
@@ -165,13 +183,31 @@ const getDashboardData = async (req, res) => {
               LIMIT 1
             ) AS rake_loading_start_datetime,
             (
-              SELECT w_last.loading_end_time
-              FROM wagon_records w_last
-            WHERE w_last.rake_serial_number = d.rake_serial_number
-                AND (d.single_indent = true OR w_last.indent_number = d.indent_number)
-                AND w_last.loading_end_time IS NOT NULL
-              ORDER BY w_last.tower_number DESC
-              LIMIT 1
+              -- ✅ FIX: Only return loading_end_time if ALL wagons have it filled
+              CASE 
+                WHEN (
+                  SELECT COUNT(*) 
+                  FROM wagon_records w_all
+                  WHERE w_all.rake_serial_number = d.rake_serial_number
+                    AND (d.single_indent = true OR w_all.indent_number = d.indent_number)
+                ) = (
+                  SELECT COUNT(*) 
+                  FROM wagon_records w_filled
+                  WHERE w_filled.rake_serial_number = d.rake_serial_number
+                    AND (d.single_indent = true OR w_filled.indent_number = d.indent_number)
+                    AND w_filled.loading_end_time IS NOT NULL
+                )
+                THEN (
+                  SELECT w_last.loading_end_time
+                  FROM wagon_records w_last
+                  WHERE w_last.rake_serial_number = d.rake_serial_number
+                    AND (d.single_indent = true OR w_last.indent_number = d.indent_number)
+                    AND w_last.loading_end_time IS NOT NULL
+                  ORDER BY w_last.tower_number DESC
+                  LIMIT 1
+                )
+                ELSE NULL
+              END
             ) AS rake_loading_end_actual,
             COALESCE(SUM(w.loaded_bag_count), 0) AS total_bags_loaded,
             SUM(w.wagon_to_be_loaded) AS total_bags_to_be_loaded,
@@ -254,13 +290,31 @@ const getDashboardData = async (req, res) => {
               LIMIT 1
             ) AS rake_loading_start_datetime,
             (
-              SELECT w_last.loading_end_time
-              FROM wagon_records w_last
-            WHERE w_last.rake_serial_number = d.rake_serial_number
-                AND (d.single_indent = true OR w_last.indent_number = d.indent_number)
-                AND w_last.loading_end_time IS NOT NULL
-              ORDER BY w_last.tower_number DESC
-              LIMIT 1
+              -- ✅ FIX: Only return loading_end_time if ALL wagons have it filled
+              CASE 
+                WHEN (
+                  SELECT COUNT(*) 
+                  FROM wagon_records w_all
+                  WHERE w_all.rake_serial_number = d.rake_serial_number
+                    AND (d.single_indent = true OR w_all.indent_number = d.indent_number)
+                ) = (
+                  SELECT COUNT(*) 
+                  FROM wagon_records w_filled
+                  WHERE w_filled.rake_serial_number = d.rake_serial_number
+                    AND (d.single_indent = true OR w_filled.indent_number = d.indent_number)
+                    AND w_filled.loading_end_time IS NOT NULL
+                )
+                THEN (
+                  SELECT w_last.loading_end_time
+                  FROM wagon_records w_last
+                  WHERE w_last.rake_serial_number = d.rake_serial_number
+                    AND (d.single_indent = true OR w_last.indent_number = d.indent_number)
+                    AND w_last.loading_end_time IS NOT NULL
+                  ORDER BY w_last.tower_number DESC
+                  LIMIT 1
+                )
+                ELSE NULL
+              END
             ) AS rake_loading_end_actual,
             COALESCE(SUM(w.loaded_bag_count), 0) AS total_bags_loaded,
             SUM(w.wagon_to_be_loaded) AS total_bags_to_be_loaded,
