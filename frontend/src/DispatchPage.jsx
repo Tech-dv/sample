@@ -1299,10 +1299,10 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
 
   // Sync localDate and localTime with value when value changes externally
   useEffect(() => {
-    // Initialize with "00/00/0000" if no date value exists
-    setLocalDate(dateDisplay || "00/00/0000");
-    // Initialize with "00:00:00" if no time value exists
-    setLocalTime(time || "00:00:00");
+    // Initialize with "dd/mm/yyyy" if no date value exists
+    setLocalDate(dateDisplay || "dd/mm/yyyy");
+    // Initialize with "HH:MM:SS" if no time value exists
+    setLocalTime(time || "HH:MM:SS");
     
     // Initialize calendar date and time picker values
     if (value) {
@@ -1345,8 +1345,23 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
     // This handler is mainly for paste operations and manual editing
     let newDate = e.target.value;
     
+    // If user is typing and field shows placeholder, convert it
+    if (newDate.includes('d') || newDate.includes('m') || newDate.includes('y')) {
+      // User is trying to type over placeholder, convert to numeric format
+      newDate = newDate.replace(/[^\d/]/g, '');
+      if (newDate === "" || !newDate.includes('/')) {
+        newDate = "00/00/0000";
+      }
+    }
+    
     // Remove any non-digit and slash characters
     newDate = newDate.replace(/[^\d/]/g, '');
+    
+    // If empty after cleaning, use placeholder
+    if (!newDate || newDate.trim() === "") {
+      setLocalDate("dd/mm/yyyy");
+      return; // Don't update value if it's just placeholder
+    }
     
     // Ensure format is DD/MM/YYYY
     const parts = newDate.split('/');
@@ -1368,18 +1383,24 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
     
     // Convert to YYYY-MM-DD for storage
     const dateStorage = convertToYYYYMMDD(formattedDate);
-    const currentTime = localTime || time || "00:00:00";
+    const currentTime = localTime === "HH:MM:SS" ? "00:00:00" : (localTime || time || "00:00:00");
     const newValue = combineDateTime(dateStorage, currentTime);
     onChange && onChange(newValue);
   };
 
   const handleDateKeyDown = (e) => {
     const input = e.target;
-    let currentDate = localDate || "00/00/0000";
+    let currentDate = localDate || "dd/mm/yyyy";
+    
+    // Convert placeholder to numeric format when user starts typing
+    if (currentDate === "dd/mm/yyyy") {
+      currentDate = "00/00/0000"; // Use numeric format for processing
+      setLocalDate("00/00/0000"); // Update display immediately
+    }
     
     // Ensure format is always DD/MM/YYYY
     if (!currentDate.includes('/')) {
-      currentDate = "00/00/0000";
+      currentDate = "00/00/0000"; // Use numeric format for processing
     }
     
     const parts = currentDate.split('/');
@@ -1399,6 +1420,17 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
     // Handle number key press - replace digit at current position
     if (e.key >= '0' && e.key <= '9') {
       e.preventDefault();
+      
+      // If still showing placeholder, convert to numeric format
+      if (currentDate === "dd/mm/yyyy") {
+        currentDate = "00/00/0000";
+        setLocalDate("00/00/0000");
+        const parts = currentDate.split('/');
+        day = (parts[0] || '00').padStart(2, '0');
+        month = (parts[1] || '00').padStart(2, '0');
+        year = (parts[2] || '0000').padStart(4, '0');
+        currentPosition = 0; // Reset position to start
+      }
       
       let newDay = day;
       let newMonth = month;
@@ -1491,7 +1523,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
       
       // Convert to YYYY-MM-DD for storage
       const dateStorage = convertToYYYYMMDD(formattedDate);
-      const currentTime = localTime || time || "00:00:00";
+      const currentTime = localTime === "HH:MM:SS" ? "00:00:00" : (localTime || time || "00:00:00");
       const newValue = combineDateTime(dateStorage, currentTime);
       onChange && onChange(newValue);
       
@@ -1567,7 +1599,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
     
       // Convert to YYYY-MM-DD for storage
       const dateStorage = convertToYYYYMMDD(formattedDate);
-      const currentTime = localTime || time || "00:00:00";
+      const currentTime = localTime === "HH:MM:SS" ? "00:00:00" : (localTime || time || "00:00:00");
       const newValue = combineDateTime(dateStorage, currentTime);
       onChange && onChange(newValue);
       
@@ -1591,9 +1623,9 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
   };
 
   const handleDateFocus = (e) => {
-    // ✅ FIX: If date is "00/00/0000" or empty, automatically fill with today's date
+    // ✅ FIX: If date is "dd/mm/yyyy", "00/00/0000" or empty, automatically fill with today's date
     const currentDate = localDate || "";
-    if (!currentDate || currentDate === "00/00/0000" || !currentDate.includes('/') || currentDate.split('/').length !== 3) {
+    if (!currentDate || currentDate === "dd/mm/yyyy" || currentDate === "00/00/0000" || !currentDate.includes('/') || currentDate.split('/').length !== 3) {
       const today = new Date();
       const year = today.getFullYear();
       const month = String(today.getMonth() + 1).padStart(2, '0');
@@ -1605,7 +1637,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
       setCalendarDate(today); // Also update calendarDate for calendar
       
       // Update the combined value immediately
-      const currentTime = localTime || time || "00:00:00";
+      const currentTime = localTime === "HH:MM:SS" ? "00:00:00" : (localTime || time || "00:00:00");
       const newValue = combineDateTime(dateStorage, currentTime);
       onChange && onChange(newValue);
       
@@ -1617,9 +1649,9 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
 
   const handleDateInputClick = () => {
     if (!readOnly) {
-      // ✅ FIX: If date is "00/00/0000" or empty, automatically fill with today's date
+      // ✅ FIX: If date is "dd/mm/yyyy", "00/00/0000" or empty, automatically fill with today's date
       const currentDate = localDate || dateDisplay || "";
-      if (!currentDate || currentDate === "00/00/0000" || currentDate.trim() === "") {
+      if (!currentDate || currentDate === "dd/mm/yyyy" || currentDate === "00/00/0000" || currentDate.trim() === "") {
         const today = new Date();
         const year = today.getFullYear();
         const month = String(today.getMonth() + 1).padStart(2, '0');
@@ -1631,7 +1663,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         setCalendarDate(today); // Also update calendarDate for calendar
         
         // Update the combined value immediately
-        const currentTime = localTime || time || "00:00:00";
+        const currentTime = localTime === "HH:MM:SS" ? "00:00:00" : (localTime || time || "00:00:00");
         const newValue = combineDateTime(dateStorage, currentTime);
         onChange && onChange(newValue);
       }
@@ -1726,7 +1758,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
     setLocalDate(dateDisplay);
     
     // Combine with current time
-    const currentTime = localTime || time || "00:00:00";
+    const currentTime = localTime === "HH:MM:SS" ? "00:00:00" : (localTime || time || "00:00:00");
     const newValue = combineDateTime(dateStorage, currentTime);
     onChange && onChange(newValue);
   };
@@ -1944,16 +1976,13 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
       
       // Convert to YYYY-MM-DD for storage
       const dateStorage = convertToYYYYMMDD(formattedDate);
-      const currentTime = localTime || time || "00:00:00";
+      const currentTime = localTime === "HH:MM:SS" ? "00:00:00" : (localTime || time || "00:00:00");
       const newValue = combineDateTime(dateStorage, currentTime);
       onChange && onChange(newValue);
     } else {
-      // If empty, set to "00/00/0000"
-      setLocalDate("00/00/0000");
-      const dateStorage = convertToYYYYMMDD("00/00/0000");
-      const currentTime = localTime || time || "00:00:00";
-      const newValue = combineDateTime(dateStorage, currentTime);
-      onChange && onChange(newValue);
+      // If empty, set to "dd/mm/yyyy" (display format)
+      setLocalDate("dd/mm/yyyy");
+      // Don't update the value if it's just a placeholder
     }
   };
 
@@ -1962,8 +1991,23 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
     // The actual digit-by-digit replacement is handled in handleTimeKeyDown
     let newTime = e.target.value;
     
+    // If user is typing and field shows placeholder, convert it
+    if (newTime.includes('H') || newTime.includes('M') || newTime.includes('S')) {
+      // User is trying to type over placeholder, convert to numeric format
+      newTime = newTime.replace(/[^\d:]/g, '');
+      if (newTime === "" || !newTime.includes(':')) {
+        newTime = "00:00:00";
+      }
+    }
+    
     // Remove any non-digit and colon characters
     newTime = newTime.replace(/[^\d:]/g, '');
+    
+    // If empty after cleaning, use placeholder
+    if (!newTime || newTime.trim() === "") {
+      setLocalTime("HH:MM:SS");
+      return; // Don't update value if it's just placeholder
+    }
     
     // Ensure format is HH:mm:ss
     const parts = newTime.split(':');
@@ -1992,12 +2036,18 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
   
   const handleTimeKeyDown = (e) => {
     const input = e.target;
-    let currentTime = localTime || "00:00:00";
+    let currentTime = localTime || "HH:MM:SS";
     const cursorPos = input.selectionStart;
+    
+    // Convert placeholder to numeric format when user starts typing
+    if (currentTime === "HH:MM:SS") {
+      currentTime = "00:00:00"; // Use numeric format for processing
+      setLocalTime("00:00:00"); // Update display immediately
+    }
     
     // Ensure format is always HH:mm:ss
     if (!currentTime.includes(':')) {
-      currentTime = "00:00:00";
+      currentTime = "00:00:00"; // Use numeric format for processing
     }
     
     const parts = currentTime.split(':');
@@ -2017,9 +2067,9 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
     
     // Handle number key press - replace digit at current position
     if (e.key >= '0' && e.key <= '9') {
-      // ✅ FIX: If date is empty or "00/00/0000", set it to today's date before processing time input
+      // ✅ FIX: If date is empty, "dd/mm/yyyy" or "00/00/0000", set it to today's date before processing time input
       const currentDate = localDate || dateDisplay || "";
-      if (!currentDate || currentDate === "00/00/0000" || currentDate.trim() === "") {
+      if (!currentDate || currentDate === "dd/mm/yyyy" || currentDate === "00/00/0000" || currentDate.trim() === "") {
         const today = new Date();
         const year = today.getFullYear();
         const month = String(today.getMonth() + 1).padStart(2, '0');
@@ -2027,6 +2077,17 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         const dateStorage = `${year}-${month}-${day}`;
         const dateDisplayToday = `${day}/${month}/${year}`;
         setLocalDate(dateDisplayToday);
+      }
+      
+      // If still showing placeholder, convert to numeric format
+      if (currentTime === "HH:MM:SS") {
+        currentTime = "00:00:00";
+        setLocalTime("00:00:00");
+        const parts = currentTime.split(':');
+        hours = (parts[0] || '00').padStart(2, '0');
+        minutes = (parts[1] || '00').padStart(2, '0');
+        seconds = (parts[2] || '00').padStart(2, '0');
+        currentPosition = 0; // Reset position to start
       }
       
           e.preventDefault();
@@ -2141,7 +2202,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
       // ✅ FIX: Use the updated date (may have been set to today's date above)
       const currentDateForCombine = localDate || dateDisplay || "";
       let dateForCombine = date;
-      if (!currentDateForCombine || currentDateForCombine === "00/00/0000" || currentDateForCombine.trim() === "") {
+      if (!currentDateForCombine || currentDateForCombine === "dd/mm/yyyy" || currentDateForCombine === "00/00/0000" || currentDateForCombine.trim() === "") {
         const today = new Date();
         const year = today.getFullYear();
         const month = String(today.getMonth() + 1).padStart(2, '0');
@@ -2237,7 +2298,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
       // ✅ FIX: Use the updated date (may have been set to today's date above)
       const currentDateForCombine = localDate || dateDisplay || "";
       let dateForCombine = date;
-      if (!currentDateForCombine || currentDateForCombine === "00/00/0000" || currentDateForCombine.trim() === "") {
+      if (!currentDateForCombine || currentDateForCombine === "dd/mm/yyyy" || currentDateForCombine === "00/00/0000" || currentDateForCombine.trim() === "") {
         const today = new Date();
         const year = today.getFullYear();
         const month = String(today.getMonth() + 1).padStart(2, '0');
@@ -2292,7 +2353,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
       // ✅ FIX: Use the updated date (may have been set to today's date above)
       const currentDateForCombine = localDate || dateDisplay || "";
       let dateForCombine = date;
-      if (!currentDateForCombine || currentDateForCombine === "00/00/0000" || currentDateForCombine.trim() === "") {
+      if (!currentDateForCombine || currentDateForCombine === "dd/mm/yyyy" || currentDateForCombine === "00/00/0000" || currentDateForCombine.trim() === "") {
         const today = new Date();
         const year = today.getFullYear();
         const month = String(today.getMonth() + 1).padStart(2, '0');
@@ -2309,9 +2370,9 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
   };
 
   const handleTimeFocus = (e) => {
-    // ✅ FIX: If date is empty or "00/00/0000", set it to today's date
+    // ✅ FIX: If date is empty, "dd/mm/yyyy" or "00/00/0000", set it to today's date
     const currentDate = localDate || dateDisplay || "";
-    if (!currentDate || currentDate === "00/00/0000" || currentDate.trim() === "") {
+    if (!currentDate || currentDate === "dd/mm/yyyy" || currentDate === "00/00/0000" || currentDate.trim() === "") {
       const today = new Date();
       const year = today.getFullYear();
       const month = String(today.getMonth() + 1).padStart(2, '0');
@@ -2320,15 +2381,15 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
       const dateDisplayToday = `${day}/${month}/${year}`;
       setLocalDate(dateDisplayToday);
       // Update the combined datetime value with today's date
-      const currentTime = localTime || time || "00:00:00";
+      const currentTime = localTime === "HH:MM:SS" ? "00:00:00" : (localTime || time || "00:00:00");
       const newValue = combineDateTime(dateStorage, currentTime);
       onChange && onChange(newValue);
     }
     
-    // Ensure format is "00:00:00" when focused if empty or invalid
+    // Ensure format is "HH:MM:SS" when focused if empty or invalid (display format)
     const currentTime = localTime || time || "";
-    if (!currentTime || !currentTime.includes(':') || currentTime.split(':').length !== 3) {
-      setLocalTime("00:00:00");
+    if (!currentTime || !currentTime.includes(':') || currentTime.split(':').length !== 3 || currentTime === "HH:MM:SS") {
+      setLocalTime("HH:MM:SS");
       setTimeout(() => {
         e.target.setSelectionRange(0, 0); // Position cursor at start
       }, 0);
@@ -2359,12 +2420,9 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         onChange && onChange(newValue);
       }
       } else {
-      // If empty, set to "00:00:00"
-      setLocalTime("00:00:00");
-      if (date) {
-        const newValue = combineDateTime(date, "00:00:00");
-        onChange && onChange(newValue);
-      }
+      // If empty, set to "HH:MM:SS" (display format)
+      setLocalTime("HH:MM:SS");
+      // Don't update the value if it's just a placeholder
       }
     };
 
@@ -2425,14 +2483,14 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         <input
             type="text"
             ref={dateInputRef}
-            value={localDate || "00/00/0000"}
+            value={localDate || "dd/mm/yyyy"}
           readOnly={readOnly}
           onChange={handleDateChange}
             onFocus={handleDateFocus}
             onBlur={handleDateBlur}
             onKeyDown={handleDateKeyDown}
             onClick={handleDateInputClick}
-            placeholder="DD/MM/YYYY"
+            placeholder="dd/mm/yyyy"
           style={{
             ...field.input,
             background: readOnly ? "#f4f4f4" : "white",
@@ -2442,20 +2500,20 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
               cursor: readOnly ? "default" : "pointer",
             }}
             pattern="\d{2}/\d{2}/\d{4}"
-            title="Enter date in DD/MM/YYYY format. Click to open calendar or type digits to replace: 00/00/0000"
+            title="Enter date in DD/MM/YYYY format. Click to open calendar or type digits to replace: dd/mm/yyyy"
         />
         <div style={{ position: "relative", flex: "1", display: "flex", alignItems: "center" }}>
             <input
           type="text"
           ref={timeInputRef}
-          value={localTime || "00:00:00"}
+          value={localTime || "HH:MM:SS"}
           readOnly={readOnly}
           onChange={handleTimeChange}
           onFocus={handleTimeFocus}
           onBlur={handleTimeBlur}
           onKeyDown={handleTimeKeyDown}
           onClick={() => !readOnly && setShowCalendar(true)}
-          placeholder="00:00:00"
+          placeholder="HH:MM:SS"
               style={{
                 ...field.input,
             background: readOnly ? "#f4f4f4" : "white",
@@ -2465,7 +2523,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
             cursor: readOnly ? "default" : "pointer",
               }}
           pattern="([0-1][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]"
-          title="Enter time in 24-hour format (HH:mm:ss). Click to open calendar or type digits to replace: 00:00:00"
+          title="Enter time in 24-hour format (HH:mm:ss). Click to open calendar or type digits to replace: HH:MM:SS"
         />
           {!readOnly && (
             <span

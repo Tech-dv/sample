@@ -346,7 +346,7 @@ function TrainEdit() {
             const dbLoadingStatus = Boolean(w.loading_status);
 
             // ✅ FIX: Check if loading_status from DB doesn't match calculated value
-            // If it doesn't match, it was manually set - track it
+            // Calculate what the status SHOULD be based on current bag counts
             const wagonToBeLoaded = w.wagon_to_be_loaded != null && w.wagon_to_be_loaded !== ""
               ? Number(w.wagon_to_be_loaded)
               : null;
@@ -357,24 +357,34 @@ function TrainEdit() {
               ? (loadedBagCount >= wagonToBeLoaded)
               : false;
 
-            // ✅ FIX: Track wagons that were manually set
-            // Only mark as manually toggled if status is explicitly different from calculated status
-            // This allows automatic updates when bag counts change and condition is met
-            if (dbLoadingStatus !== calculatedStatus) {
-              // Mark as manually toggled - but allow auto-update to true when condition is met
-              manuallyToggledSet.add(w.tower_number || (i + 1)); // Use actual tower_number from DB
+            // ✅ CRITICAL FIX: Only mark as manually toggled if user explicitly set status to true when condition is not met
+            // DO NOT mark as manually toggled if:
+            // - DB status is FALSE and calculated is TRUE (this is just an unsaved auto-update, not a manual toggle)
+            // This prevents unsaved auto-updates from being treated as manual toggles
+            // Only explicit user clicks on the toggle button will mark it as manual (handled in toggleStatus function)
+            if (dbLoadingStatus && !calculatedStatus) {
+              // User manually set to true when condition is not met - definitely manual
+              manuallyToggledSet.add(w.tower_number || (i + 1));
             }
+            // If DB has false but condition is met, DON'T mark as manual - it's just an unsaved auto-update
+            // The status will be auto-corrected to true below
 
             // ✅ CRITICAL FIX: Remove seal_number from the object to avoid conflicts
             // We only use seal_numbers array, not seal_number string from database
             const { seal_number: _, ...wagonWithoutSealNumber } = w;
+            
+            // ✅ CRITICAL FIX: If condition is met but DB has false, auto-update to true
+            // This handles the case where auto-update happened but wasn't saved
+            // This is NOT a manual toggle - it's just an unsaved auto-update
+            // Only explicit user clicks on the toggle button will be treated as manual toggles
+            const finalLoadingStatus = calculatedStatus ? true : dbLoadingStatus;
             
             return {
               ...wagonWithoutSealNumber,
               // If wagonTypeHL option is true, set wagon_type to "HL", otherwise use existing value
               wagon_type: finalOptions.wagonTypeHL ? "HL" : (w.wagon_type || ""),
               sick_box: w.sick_box ? "Yes" : "No",
-              loading_status: dbLoadingStatus,
+              loading_status: finalLoadingStatus, // Use calculated status if condition is met, otherwise use DB status
               tower_number: w.tower_number || (i + 1), // Use actual tower_number from DB
               seal_numbers: sealNumbers.length > 0 ? sealNumbers : [""],
               confirmed_seal_indices: confirmedIndices, // Restore confirmed seal indices from saved data
@@ -1001,10 +1011,15 @@ function TrainEdit() {
     }));
 
     // ✅ FIX: Rebuild manuallyToggledWagons set based on current wagon states
-    // Track wagons that were manually set (either true when condition is false, or false when condition is true)
+    // Only track wagons that were explicitly manually toggled (not unsaved auto-updates)
+    // Since we can't distinguish between manual toggle and unsaved auto-update from state alone,
+    // we'll preserve the existing manuallyToggledWagons set and only add new ones from explicit toggles
+    // The set is maintained by toggleStatus function when user clicks the toggle button
+    // For duplicate/delete operations, preserve existing manual toggles
     const newManuallyToggledSet = new Set();
     withTower.forEach(w => {
-      // Handle both string and number types
+      // Only mark as manual if status is true when condition is false (definitely manual)
+      // Don't mark as manual if status is false when condition is true (could be unsaved auto-update)
       const wagonToBeLoadedValue = w.wagon_to_be_loaded != null ? String(w.wagon_to_be_loaded) : "";
       const wagonToBeLoaded = wagonToBeLoadedValue && wagonToBeLoadedValue.trim() !== ""
         ? Number(wagonToBeLoadedValue)
@@ -1014,9 +1029,13 @@ function TrainEdit() {
         ? (loadedBagCount >= wagonToBeLoaded)
         : false;
 
-      // ✅ FIX: If current status doesn't match calculated status, it was manually set
-      // This covers both: true when condition is false, and false when condition is true
-      if (w.loading_status !== calculatedStatus) {
+      // ✅ FIX: Only mark as manual if status is true when condition is false (definitely manual)
+      // Don't mark as manual if status is false when condition is true (could be unsaved auto-update)
+      if (w.loading_status && !calculatedStatus) {
+        newManuallyToggledSet.add(w.tower_number);
+      }
+      // Preserve existing manual toggles from the current set (user may have explicitly toggled)
+      if (manuallyToggledWagons.has(w.tower_number)) {
         newManuallyToggledSet.add(w.tower_number);
       }
     });
@@ -1041,10 +1060,15 @@ function TrainEdit() {
     }));
 
     // ✅ FIX: Rebuild manuallyToggledWagons set based on current wagon states
-    // Track wagons that were manually set (either true when condition is false, or false when condition is true)
+    // Only track wagons that were explicitly manually toggled (not unsaved auto-updates)
+    // Since we can't distinguish between manual toggle and unsaved auto-update from state alone,
+    // we'll preserve the existing manuallyToggledWagons set and only add new ones from explicit toggles
+    // The set is maintained by toggleStatus function when user clicks the toggle button
+    // For duplicate/delete operations, preserve existing manual toggles
     const newManuallyToggledSet = new Set();
     withTower.forEach(w => {
-      // Handle both string and number types
+      // Only mark as manual if status is true when condition is false (definitely manual)
+      // Don't mark as manual if status is false when condition is true (could be unsaved auto-update)
       const wagonToBeLoadedValue = w.wagon_to_be_loaded != null ? String(w.wagon_to_be_loaded) : "";
       const wagonToBeLoaded = wagonToBeLoadedValue && wagonToBeLoadedValue.trim() !== ""
         ? Number(wagonToBeLoadedValue)
@@ -1054,9 +1078,13 @@ function TrainEdit() {
         ? (loadedBagCount >= wagonToBeLoaded)
         : false;
 
-      // ✅ FIX: If current status doesn't match calculated status, it was manually set
-      // This covers both: true when condition is false, and false when condition is true
-      if (w.loading_status !== calculatedStatus) {
+      // ✅ FIX: Only mark as manual if status is true when condition is false (definitely manual)
+      // Don't mark as manual if status is false when condition is true (could be unsaved auto-update)
+      if (w.loading_status && !calculatedStatus) {
+        newManuallyToggledSet.add(w.tower_number);
+      }
+      // Preserve existing manual toggles from the current set (user may have explicitly toggled)
+      if (manuallyToggledWagons.has(w.tower_number)) {
         newManuallyToggledSet.add(w.tower_number);
       }
     });
