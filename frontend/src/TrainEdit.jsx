@@ -1066,6 +1066,81 @@ function TrainEdit() {
     setIsSaved(false);
   };
 
+  /* ================= AUTO-REFRESH AUTO-POPULATED FIELDS ================= */
+  const refreshAutoPopulatedFields = async () => {
+    try {
+      // Build URL with indent_number query parameter if provided
+      const url = indentNumber
+        ? `${API_BASE}/train/${encodeURIComponent(trainId)}/edit?indent_number=${encodeURIComponent(indentNumber)}`
+        : `${API_BASE}/train/${encodeURIComponent(trainId)}/edit`;
+
+      const res = await fetch(url);
+      if (!res.ok) {
+        console.error("Failed to refresh auto-populated fields");
+        return;
+      }
+
+      const data = await res.json();
+      
+      if (!data.wagons || data.wagons.length === 0) {
+        return;
+      }
+
+      // Create a map of fresh data by tower_number for quick lookup
+      const freshDataMap = new Map();
+      data.wagons.forEach(w => {
+        const towerNum = w.tower_number || null;
+        if (towerNum !== null) {
+          freshDataMap.set(towerNum, {
+            loaded_bag_count: w.loaded_bag_count || 0,
+            unloaded_bag_count: w.unloaded_bag_count || 0,
+            loading_start_time: w.loading_start_time || "",
+            loading_end_time: w.loading_end_time || "",
+          });
+        }
+      });
+
+      // Update only the auto-populated fields, preserving all other fields
+      setWagons(prevWagons => {
+        const updated = prevWagons.map(w => {
+          const freshData = freshDataMap.get(w.tower_number);
+          if (freshData) {
+            // Only update the auto-populated fields, keep everything else unchanged
+            return {
+              ...w,
+              loaded_bag_count: freshData.loaded_bag_count,
+              unloaded_bag_count: freshData.unloaded_bag_count,
+              loading_start_time: freshData.loading_start_time,
+              loading_end_time: freshData.loading_end_time,
+            };
+          }
+          // If no matching tower_number found, return wagon unchanged
+          return w;
+        });
+        return updated;
+      });
+    } catch (err) {
+      console.error("Failed to refresh auto-populated fields:", err);
+      // Silently fail - don't interrupt user workflow
+    }
+  };
+
+  // ✅ AUTO-REFRESH: Poll for updates to auto-populated fields every 5 seconds
+  useEffect(() => {
+    if (!trainId) return;
+
+    // Set up interval to refresh auto-populated fields
+    const intervalId = setInterval(() => {
+      refreshAutoPopulatedFields();
+    }, 5000); // Refresh every 5 seconds
+
+    // Cleanup interval on unmount or when dependencies change
+    return () => {
+      clearInterval(intervalId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trainId, indentNumber]); // Only restart interval when trainId or indentNumber changes
+
   /* ================= CHECK FOR CHANGES ================= */
   const hasChanges = () => {
     if (!originalState) return true; // If no original state, assume there are changes
