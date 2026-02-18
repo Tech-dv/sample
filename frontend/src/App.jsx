@@ -14,7 +14,8 @@ import ReviewerVerify from "./ReviewerVerify";
 import ReviewerDispatch from "./ReviewerDispatch";
 import CameraList from "./CameraList";
 import Profile from "./Profile";
-import Settings from "./Settings";
+import UserManagement from "./UserManagement";
+import DropdownManagement from "./DropdownManagement";
 import Alerts from "./Alerts";
 import SessionTimeout from "./components/SessionTimeout";
 import { checkSessionOnLoad } from "./utils/sessionUtils";
@@ -165,9 +166,21 @@ function App() {
       />
       <Route 
         path="/settings" 
+        element={<Navigate to="/settings/user-management" replace />} 
+      />
+      <Route 
+        path="/settings/user-management" 
         element={
           <ProtectedRoute>
-            <Settings />
+            <UserManagement />
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/settings/dropdown-management" 
+        element={
+          <ProtectedRoute>
+            <DropdownManagement />
           </ProtectedRoute>
         } 
       />

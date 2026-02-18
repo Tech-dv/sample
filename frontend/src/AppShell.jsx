@@ -14,6 +14,7 @@ import ToastNotification from "./components/ToastNotification";
 function AppShell({ children }) {
   /* ================= STATE ================= */
   const [open, setOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifAnchorRect, setNotifAnchorRect] = useState(null);
   const [notifCount, setNotifCount] = useState(0);
@@ -26,6 +27,13 @@ function AppShell({ children }) {
   const role = localStorage.getItem("role");
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Auto-expand settings sub-menu when on a settings page
+  useEffect(() => {
+    if (location.pathname.startsWith("/settings")) {
+      setSettingsOpen(true);
+    }
+  }, [location.pathname]);
 
   /* ================= SESSION MANAGEMENT ================= */
   // This hook will track activity and handle session timeout
@@ -396,12 +404,54 @@ function AppShell({ children }) {
                 location={location}
                 onClick={() => setOpen(false)}
               />
-                <NavItem
-                  to="/settings"
-                  label="Settings"
-                  location={location}
-                  onClick={() => setOpen(false)}
-                />
+                {/* Settings with expandable sub-menu */}
+                <div>
+                  <button
+                    style={{
+                      ...styles.navItem,
+                      ...(location.pathname.startsWith("/settings") ? styles.navItemActive : {}),
+                      width: "100%",
+                      textAlign: "left",
+                      border: "none",
+                      background: "none",
+                      cursor: "pointer",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                    }}
+                    onClick={() => setSettingsOpen((prev) => !prev)}
+                  >
+                    <span>Settings</span>
+                    <span
+                      style={{
+                        display: "inline-block",
+                        transition: "transform 0.2s ease",
+                        transform: settingsOpen ? "rotate(90deg)" : "rotate(0deg)",
+                        fontSize: "12px",
+                      }}
+                    >
+                      ▶
+                    </span>
+                  </button>
+                  {settingsOpen && (
+                    <div style={styles.subMenu}>
+                      <NavItem
+                        to="/settings/user-management"
+                        label="User Management"
+                        location={location}
+                        onClick={() => setOpen(false)}
+                        isSubItem
+                      />
+                      <NavItem
+                        to="/settings/dropdown-management"
+                        label="Dropdown Management"
+                        location={location}
+                        onClick={() => setOpen(false)}
+                        isSubItem
+                      />
+                    </div>
+                  )}
+                </div>
               </>
             )}
 
@@ -440,7 +490,7 @@ function AppShell({ children }) {
 
 /* ================= NAV ITEM ================= */
 
-function NavItem({ to, label, location, onClick }) {
+function NavItem({ to, label, location, onClick, isSubItem }) {
   const isActive = location.pathname === to;
 
   return (
@@ -449,6 +499,7 @@ function NavItem({ to, label, location, onClick }) {
       onClick={onClick}
       style={{
         ...styles.navItem,
+        ...(isSubItem ? styles.navSubItem : {}),
         ...(isActive ? styles.navItemActive : {}),
       }}
     >
@@ -643,6 +694,19 @@ const styles = {
     backgroundColor: "#1e40af",
     color: "white",
     fontWeight: "600",
+  },
+
+  subMenu: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+    marginTop: "2px",
+    paddingLeft: "12px",
+  },
+
+  navSubItem: {
+    fontSize: "13px",
+    padding: "10px 16px",
   },
 
   /* ===== CONTENT ===== */
