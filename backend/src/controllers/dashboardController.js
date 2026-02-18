@@ -433,19 +433,13 @@ const getDashboardData = async (req, res) => {
 
       // Count wagons across ALL these trains (including split ones)
       // Only count wagons from in-progress trains (not cancelled, not approved, not hauled out)
+      // ✅ CRITICAL: Count ONLY wagons where loading_status = true (completed status)
+      // This ensures we only count wagons that are actually marked as completed, not just those that meet the condition
       const wagonRes = await pool.query(
         `
         SELECT
           COUNT(*) AS total_wagons,
-          COUNT(*) FILTER (
-            WHERE
-              -- ✅ Include manual completion toggle
-              loading_status = true
-              OR (
-                loaded_bag_count >= wagon_to_be_loaded
-                AND loaded_bag_count > 0
-              )
-          ) AS completed_wagons
+          COUNT(*) FILTER (WHERE loading_status = true) AS completed_wagons
         FROM wagon_records
         WHERE rake_serial_number = ANY($1)
         `,

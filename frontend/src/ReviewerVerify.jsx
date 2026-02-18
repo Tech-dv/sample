@@ -313,6 +313,10 @@ function ReviewerVerify() {
               ? sealNumbers.map((_, idx) => idx).filter(idx => sealNumbers[idx] && sealNumbers[idx].trim() !== "")
               : [];
 
+            // ✅ CRITICAL FIX: Remove seal_number from the object to avoid conflicts
+            // We only use seal_numbers array, not seal_number string from database
+            const { seal_number: _, ...wagonWithoutSealNumber } = w;
+
             const dbLoadingStatus = Boolean(w.loading_status);
 
             // ✅ FIX: Check if loading_status from DB doesn't match calculated value
@@ -332,7 +336,7 @@ function ReviewerVerify() {
             }
 
             return {
-              ...w,
+              ...wagonWithoutSealNumber, // Use wagon without seal_number to avoid conflicts
               // If wagonTypeHL option is true, set wagon_type to "HL", otherwise use existing value
               wagon_type: finalOptions.wagonTypeHL ? "HL" : (w.wagon_type || ""),
               sick_box: w.sick_box ? "Yes" : "No",
@@ -743,9 +747,37 @@ function ReviewerVerify() {
         // ✅ FIX: If wagon was manually toggled to true, preserve that status
         // Otherwise, let backend calculate it based on bag counts
         const isManuallyToggled = manuallyToggledWagons.has(w.tower_number);
+        
+        // ✅ CRITICAL: Get loaded_bag_count for condition check (needed to determine if we should send loading_status)
+        // Even though we don't send bag counts, we need them to check if condition is met
+        const loadedBagCount = Number(w.loaded_bag_count) || 0;
 
+        // ✅ CRITICAL FIX: Convert seal_numbers array to seal_number string
+        // Always read from w.seal_numbers (the array), not w.seal_number (the string from DB)
+        // This ensures we get the current state of seal numbers, including any user edits
+        let sealNumberString = "";
+        if (w.seal_numbers && Array.isArray(w.seal_numbers)) {
+          // Filter out empty values and join with comma and space
+          const nonEmptySeals = w.seal_numbers.filter(s => s != null && String(s).trim() !== "");
+          sealNumberString = nonEmptySeals.join(", ");
+        } else if (w.seal_number && typeof w.seal_number === 'string') {
+          // Fallback: if seal_numbers array doesn't exist but seal_number string does, use it
+          // This handles edge cases where the array wasn't properly set
+          sealNumberString = w.seal_number.trim();
+        }
+
+        // ✅ CRITICAL FIX: Ensure seal_number is always included, even if empty
+        // Build payload explicitly to avoid any field conflicts
         const wagonPayload = {
-          ...w,
+          // Core wagon fields
+          wagon_number: w.wagon_number || null,
+          wagon_type: w.wagon_type || null,
+          cc_weight: w.cc_weight || null,
+          sick_box: w.sick_box || null,
+          tower_number: w.tower_number,
+          // ❌ REMOVED: loaded_bag_count and unloaded_bag_count - these are auto-populated by bag counting system
+          stoppage_time: w.stoppage_time || null,
+          remarks: w.remarks || null,
           // In single indent mode, use trainHeader values
           // In multiple indent mode, use wagon-level values
           wagon_destination: editOptions.singleIndent
@@ -758,15 +790,26 @@ function ReviewerVerify() {
             ? (trainHeader.customer_id ? Number(trainHeader.customer_id) : null)
             : (w.customer_id ? Number(w.customer_id) : null),
           commodity: w.commodity || null,
-          seal_number: w.seal_numbers.filter(s => s.trim()).join(", "),
+          // ✅ CRITICAL: Always include seal_number, even if empty (send null if no seal numbers)
+          // Use empty string if sealNumberString is empty, but convert to null for database
+          seal_number: sealNumberString && sealNumberString.trim() !== "" ? sealNumberString.trim() : null,
           // ✅ FIX: Use null instead of 0 for empty wagon_to_be_loaded
           wagon_to_be_loaded: wagonToBeLoaded,
         };
 
-        // ✅ FIX: Only include loading_status if wagon was manually toggled
-        // This tells the backend to use this value instead of calculating it
-        if (isManuallyToggled) {
+        // ✅ CRITICAL FIX: Always include loading_status when condition is met or manually toggled
+        // Calculate if condition is met: loadedBagCount >= wagonToBeLoaded
+        const conditionMet = wagonToBeLoaded != null && loadedBagCount >= wagonToBeLoaded;
+        
+        // Always include loading_status if:
+        // 1. Condition is met (loadedBagCount >= wagonToBeLoaded) - send the current status (should be true)
+        // 2. Wagon was manually toggled - send the user's explicit choice
+        // This ensures the status is saved correctly when bags are loaded and condition is met
+        if (conditionMet || isManuallyToggled) {
           wagonPayload.loading_status = w.loading_status;
+          console.log(`[REVIEWER SAVE] Including loading_status=${w.loading_status} for wagon tower_number=${w.tower_number}, conditionMet=${conditionMet}, isManuallyToggled=${isManuallyToggled}, loadedBagCount=${loadedBagCount}, wagonToBeLoaded=${wagonToBeLoaded}`);
+        } else {
+          console.log(`[REVIEWER SAVE] NOT including loading_status for wagon tower_number=${w.tower_number}, conditionMet=${conditionMet}, isManuallyToggled=${isManuallyToggled}, loadedBagCount=${loadedBagCount}, wagonToBeLoaded=${wagonToBeLoaded}`);
         }
 
         return wagonPayload;

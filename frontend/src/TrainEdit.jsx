@@ -185,6 +185,14 @@ function TrainEdit() {
   // Used for change detection (originalState comparison)
   const getUserEditableFields = (wagons) => {
     return wagons.map(w => {
+      // ✅ CRITICAL FIX: Normalize seal_numbers array for comparison
+      // Filter out empty strings and normalize to ensure consistent comparison
+      const normalizedSealNumbers = (w.seal_numbers && Array.isArray(w.seal_numbers))
+        ? w.seal_numbers
+            .map(s => s != null ? String(s).trim() : "")
+            .filter(s => s !== "") // Remove empty strings for comparison
+        : [];
+      
       // Only user-editable fields, exclude auto-populated ones
       const editableFields = {
         wagon_number: w.wagon_number || "",
@@ -193,10 +201,11 @@ function TrainEdit() {
         sick_box: w.sick_box || "",
         wagon_to_be_loaded: w.wagon_to_be_loaded || "",
         commodity: w.commodity || "",
-        seal_numbers: w.seal_numbers || [""],
+        seal_numbers: normalizedSealNumbers.length > 0 ? normalizedSealNumbers : [], // Use normalized array for comparison
         confirmed_seal_indices: w.confirmed_seal_indices || [], // Preserve confirmed seal indices
         stoppage_time: w.stoppage_time || "",
         remarks: w.remarks || "",
+        loading_status: w.loading_status || false, // ✅ CRITICAL FIX: Include loading_status in change detection
         tower_number: w.tower_number, // Keep for reference but will be recalculated
         // Multiple indent mode fields
         indent_number: w.indent_number || "",
@@ -348,14 +357,20 @@ function TrainEdit() {
               ? (loadedBagCount >= wagonToBeLoaded)
               : false;
 
-            // ✅ FIX: Track wagons that were manually set (either true when condition is false, or false when condition is true)
-            // If DB status doesn't match calculated status, it was manually set
+            // ✅ FIX: Track wagons that were manually set
+            // Only mark as manually toggled if status is explicitly different from calculated status
+            // This allows automatic updates when bag counts change and condition is met
             if (dbLoadingStatus !== calculatedStatus) {
+              // Mark as manually toggled - but allow auto-update to true when condition is met
               manuallyToggledSet.add(w.tower_number || (i + 1)); // Use actual tower_number from DB
             }
 
+            // ✅ CRITICAL FIX: Remove seal_number from the object to avoid conflicts
+            // We only use seal_numbers array, not seal_number string from database
+            const { seal_number: _, ...wagonWithoutSealNumber } = w;
+            
             return {
-              ...w,
+              ...wagonWithoutSealNumber,
               // If wagonTypeHL option is true, set wagon_type to "HL", otherwise use existing value
               wagon_type: finalOptions.wagonTypeHL ? "HL" : (w.wagon_type || ""),
               sick_box: w.sick_box ? "Yes" : "No",
@@ -490,8 +505,8 @@ function TrainEdit() {
   };
 
   // ✅ FIX: Update loading_status when loaded_bag_count changes (from API updates)
-  // Only update if wagon was NOT manually toggled
-  // Status should ONLY update based on manual toggle or when loaded_bag_count equals wagon_to_be_loaded
+  // Status should update automatically when loaded_bag_count >= wagon_to_be_loaded
+  // Only preserve manual toggle if user explicitly set it to false when condition is met
   // Do NOT update when loading_end_time changes
   useEffect(() => {
     if (wagons.length === 0) return;
@@ -525,19 +540,64 @@ function TrainEdit() {
         return w;
       }
       
+      const calculatedStatus = loadedBagCount >= wagonToBeLoaded;
       const isManuallyToggled = manuallyToggledWagons.has(w.tower_number);
       
-      // Skip if manually toggled - preserve user's choice (only when wagon_to_be_loaded has a value)
-      if (isManuallyToggled) {
+      // ✅ CRITICAL FIX: Check condition but respect manual overrides
+      // If user manually toggled OFF (even when condition is met), preserve OFF state
+      // If user manually toggled ON (even when condition is not met), preserve ON state
+      if (calculatedStatus) {
+        // Condition is met - status should normally be TRUE
+        if (isManuallyToggled && !w.loading_status) {
+          // ✅ EXCEPTION: User manually toggled OFF even though condition is met - preserve OFF
+          // This handles the case where user explicitly set it to false
+          console.log(`[AUTO-UPDATE] Preserving manual OFF for wagon ${w.tower_number} even though condition is met`);
+          return w; // Keep it OFF
+        }
+        if (!w.loading_status && !isManuallyToggled) {
+          // Status is false, condition is met, and NOT manually toggled - update to true
+          return { ...w, loading_status: true };
+        }
+        // Status is already true and condition is met - no change needed
+        // If it was manually toggled but is now true and condition is met, we can remove the manual flag
+        // (since it matches the calculated state now)
+        if (isManuallyToggled && w.loading_status) {
+          // Status is true and matches calculated - remove manual flag (no longer needed)
+          setManuallyToggledWagons(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(w.tower_number);
+            return newSet;
+          });
+        }
         return w;
       }
-
-      const calculatedStatus = loadedBagCount >= wagonToBeLoaded;
-
-      // Only update if status changed
-      if (w.loading_status !== calculatedStatus) {
-        return { ...w, loading_status: calculatedStatus };
+      
+      // Condition is NOT met (loadedBagCount < wagonToBeLoaded)
+      // Status should normally be FALSE, unless user explicitly set it to true
+      if (!calculatedStatus) {
+        if (w.loading_status && isManuallyToggled) {
+          // ✅ EXCEPTION: User manually toggled ON even though condition is not met - preserve ON
+          console.log(`[AUTO-UPDATE] Preserving manual ON for wagon ${w.tower_number} even though condition is not met`);
+          return w; // Keep it ON
+        }
+        if (w.loading_status && !isManuallyToggled) {
+          // Status is true but condition not met and not manually set - update to false
+          return { ...w, loading_status: false };
+        }
+        // Status is already false - no change needed
+        // If it was manually toggled but is now false and condition is not met, we can remove the manual flag
+        if (isManuallyToggled && !w.loading_status) {
+          // Status is false and matches calculated - remove manual flag (no longer needed)
+          setManuallyToggledWagons(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(w.tower_number);
+            return newSet;
+          });
+        }
+        return w;
       }
+      
+      return w;
       
       return w;
     });
@@ -1021,6 +1081,33 @@ function TrainEdit() {
     // Compare wagons (deep comparison)
     const wagonsChanged = JSON.stringify(currentState.wagons) !== JSON.stringify(originalState.wagons);
     
+    // ✅ DEBUG: Log change detection for seal numbers and loading_status
+    if (wagonsChanged) {
+      console.log(`[CHANGE DETECTION] Wagons changed detected`);
+      // Check specifically for seal number changes
+      currentState.wagons.forEach((w, i) => {
+        const originalSeals = originalState.wagons[i]?.seal_numbers || [];
+        const currentSeals = w.seal_numbers || [];
+        if (JSON.stringify(originalSeals) !== JSON.stringify(currentSeals)) {
+          console.log(`[CHANGE DETECTION] Wagon ${i+1} (tower ${w.tower_number}) seal numbers changed:`, {
+            original: originalSeals,
+            current: currentSeals
+          });
+        }
+        // ✅ DEBUG: Check for loading_status changes
+        const originalStatus = originalState.wagons[i]?.loading_status || false;
+        const currentStatus = w.loading_status || false;
+        if (originalStatus !== currentStatus) {
+          console.log(`[CHANGE DETECTION] Wagon ${i+1} (tower ${w.tower_number}) loading_status changed:`, {
+            original: originalStatus,
+            current: currentStatus
+          });
+        }
+      });
+    } else {
+      console.log(`[CHANGE DETECTION] No changes detected - wagons are identical`);
+    }
+    
     return headerChanged || wagonsChanged;
   };
 
@@ -1029,9 +1116,13 @@ function TrainEdit() {
     // Check if there are any changes
     const hasChangesValue = hasChanges();
     
+    console.log(`[SAVE DRAFT] Called with showPopup=${showPopup}, hasChangesValue=${hasChangesValue}`);
+    console.log(`[SAVE DRAFT] Current wagons count: ${wagons.length}, originalState exists: ${!!originalState}`);
+    
     if (!hasChangesValue) {
       // No changes - if showPopup is true (Save button), show popup and redirect to Dashboard
       // If showPopup is false (Proceed button), just return true without redirect
+      console.log(`[SAVE DRAFT] No changes detected - returning early`);
       if (showPopup) {
         setShowDraftPopup(true);
         // Popup will handle redirect to Dashboard when closed
@@ -1039,11 +1130,14 @@ function TrainEdit() {
       return true;
     }
     
+    console.log(`[SAVE DRAFT] Changes detected - proceeding with save`);
+    
     try {
       const wagonsWithHeader = wagons.map(w => {
-        // ✅ FIX: Exclude auto-populated fields (loading_start_time, loading_end_time)
+        // ✅ FIX: Exclude auto-populated fields (loading_start_time, loading_end_time, loaded_bag_count, unloaded_bag_count)
+        // Also exclude seal_numbers array and seal_number (if it exists) - we'll send seal_number as a string instead
         // These should only be set by the bag counting system, not by frontend edits
-        const { loading_start_time, loading_end_time, ...wagonData } = w;
+        const { loading_start_time, loading_end_time, loaded_bag_count, unloaded_bag_count, seal_numbers, confirmed_seal_indices, seal_number, ...wagonData } = w;
 
         // ✅ FIX: Convert empty wagon_to_be_loaded to null (not 0)
         // This prevents loading_status from being incorrectly set to true when both are 0
@@ -1056,9 +1150,42 @@ function TrainEdit() {
         // ✅ FIX: If wagon was manually toggled to true, preserve that status
         // Otherwise, let backend calculate it based on bag counts
         const isManuallyToggled = manuallyToggledWagons.has(w.tower_number);
+        
+        // ✅ CRITICAL: Get loaded_bag_count for condition check (needed to determine if we should send loading_status)
+        // Even though we don't send bag counts, we need them to check if condition is met
+        const loadedBagCount = Number(w.loaded_bag_count) || 0;
 
+        // ✅ CRITICAL FIX: Convert seal_numbers array to seal_number string
+        // Always read from w.seal_numbers (the array), not w.seal_number (the string from DB)
+        // This ensures we get the current state of seal numbers, including any user edits
+        let sealNumberString = "";
+        if (w.seal_numbers && Array.isArray(w.seal_numbers)) {
+          // Filter out empty values and join with comma and space
+          const nonEmptySeals = w.seal_numbers.filter(s => s != null && String(s).trim() !== "");
+          sealNumberString = nonEmptySeals.join(", ");
+        } else if (w.seal_number && typeof w.seal_number === 'string') {
+          // Fallback: if seal_numbers array doesn't exist but seal_number string does, use it
+          // This handles edge cases where the array wasn't properly set
+          sealNumberString = w.seal_number.trim();
+        }
+
+        // ✅ DEBUG: Log seal number conversion for troubleshooting
+        if (w.tower_number) {
+          console.log(`[FRONTEND SAVE] Wagon tower_number=${w.tower_number}, seal_numbers array:`, w.seal_numbers, `-> seal_number string: "${sealNumberString}"`);
+        }
+
+        // ✅ CRITICAL FIX: Ensure seal_number is always included, even if empty
+        // Build payload explicitly to avoid any field conflicts
         const wagonPayload = {
-          ...wagonData,
+          // Core wagon fields
+          wagon_number: w.wagon_number || null,
+          wagon_type: w.wagon_type || null,
+          cc_weight: w.cc_weight || null,
+          sick_box: w.sick_box || null,
+          tower_number: w.tower_number,
+          // ❌ REMOVED: loaded_bag_count and unloaded_bag_count - these are auto-populated by bag counting system
+          stoppage_time: w.stoppage_time || null,
+          remarks: w.remarks || null,
           // In single indent mode, use trainHeader values
           // In multiple indent mode, use wagon-level values
           wagon_destination: editOptions.singleIndent
@@ -1071,16 +1198,28 @@ function TrainEdit() {
             ? (trainHeader.customer_id ? Number(trainHeader.customer_id) : null)
             : (w.customer_id ? Number(w.customer_id) : null),
           commodity: w.commodity || null,
-          seal_number: w.seal_numbers.filter(s => s.trim()).join(", "),
+          // ✅ CRITICAL: Always include seal_number, even if empty (send null if no seal numbers)
+          // Use empty string if sealNumberString is empty, but convert to null for database
+          seal_number: sealNumberString && sealNumberString.trim() !== "" ? sealNumberString.trim() : null,
           // ✅ FIX: Use null instead of 0 for empty wagon_to_be_loaded
           wagon_to_be_loaded: wagonToBeLoaded,
         };
 
-        // ✅ FIX: Only include loading_status if wagon was manually toggled
-        // This tells the backend to use this value instead of calculating it
-        if (isManuallyToggled) {
+        // ✅ CRITICAL FIX: Always include loading_status when condition is met or manually toggled
+        // Calculate if condition is met: loadedBagCount >= wagonToBeLoaded
+        const conditionMet = wagonToBeLoaded != null && loadedBagCount >= wagonToBeLoaded;
+        
+        // Always include loading_status if:
+        // 1. Condition is met (loadedBagCount >= wagonToBeLoaded) - send the current status (should be true)
+        // 2. Wagon was manually toggled - send the user's explicit choice
+        // This ensures the status is saved correctly when bags are loaded and condition is met
+        if (conditionMet || isManuallyToggled) {
           wagonPayload.loading_status = w.loading_status;
+          console.log(`[FRONTEND SAVE] Including loading_status=${w.loading_status} for wagon tower_number=${w.tower_number}, conditionMet=${conditionMet}, isManuallyToggled=${isManuallyToggled}, loadedBagCount=${loadedBagCount}, wagonToBeLoaded=${wagonToBeLoaded}`);
+        } else {
+          console.log(`[FRONTEND SAVE] NOT including loading_status for wagon tower_number=${w.tower_number}, conditionMet=${conditionMet}, isManuallyToggled=${isManuallyToggled}, loadedBagCount=${loadedBagCount}, wagonToBeLoaded=${wagonToBeLoaded}`);
         }
+        // If condition is not met and not manually toggled, let backend calculate it (will be false)
 
         return wagonPayload;
       });

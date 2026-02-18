@@ -902,6 +902,9 @@ const { trainId } = req.params;
     console.log(`[DRAFT SAVE] Using base rake_serial_number=${rakeSerialNumber} for all wagons (no splitting during Save)`);
 
     for (const w of wagons) {
+      // ✅ DEBUG: Log seal_number to verify it's being received
+      console.log(`[DRAFT SAVE] Processing wagon tower_number=${w.tower_number}, wagon_number=${w.wagon_number || 'N/A'}, seal_number=${w.seal_number || 'null/undefined'}, seal_number type=${typeof w.seal_number}`);
+      
       // ✅ FIX: Normalize indent_number (treat null and empty string the same)
       // This is used for loading times preservation
       const indentNum = (w.indent_number && w.indent_number.trim() !== "")
@@ -912,27 +915,35 @@ const { trainId } = req.params;
       // Splitting only happens when user clicks Proceed -> Yes in the popup
       const wagonRakeSerialNumber = rakeSerialNumber;
 
-      // ✅ FIX: Check if loading_status was manually set by user
-      // If provided explicitly, use it; otherwise calculate based on bag counts
+      // ✅ FIX: Check if loading_status was provided by frontend
+      // If provided explicitly, use it; otherwise calculate based on preserved bag counts
       let loadingStatus;
 
       if (w.loading_status !== undefined && w.loading_status !== null) {
-        // User manually set the status - use it directly
+        // Frontend provided the status - use it directly
         loadingStatus = Boolean(w.loading_status);
+        console.log(`[DRAFT SAVE] Using provided loading_status=${loadingStatus} for wagon tower_number=${w.tower_number}, wagon_number=${w.wagon_number || 'N/A'}`);
       } else {
-        // Calculate based on bag counts
+        // Calculate based on bag counts (will use preserved counts from existingTimes)
+        // Note: We'll use preserved bag counts from existingTimesMap, not w.loaded_bag_count
+        // since frontend no longer sends bag counts
         const wagonToBeLoaded = w.wagon_to_be_loaded != null && w.wagon_to_be_loaded !== ""
           ? Number(w.wagon_to_be_loaded)
           : null;
-        const loadedBagCount = Number(w.loaded_bag_count) || 0;
+        
+        // Get preserved bag count (will be set later from existingTimes)
+        // For now, try to get from w.loaded_bag_count if available, otherwise will use preserved value
+        const tempLoadedBagCount = Number(w.loaded_bag_count) || 0;
 
         // Loading is complete only if:
         // 1. wagon_to_be_loaded is set (not null) AND
         // 2. loaded_bag_count >= wagon_to_be_loaded AND
         // 3. loaded_bag_count > 0 (at least one bag loaded)
         loadingStatus = wagonToBeLoaded != null
-          ? (loadedBagCount >= wagonToBeLoaded && loadedBagCount > 0)
+          ? (tempLoadedBagCount >= wagonToBeLoaded && tempLoadedBagCount > 0)
           : false;
+        
+        console.log(`[DRAFT SAVE] Calculated loading_status=${loadingStatus} for wagon tower_number=${w.tower_number}, wagon_number=${w.wagon_number || 'N/A'}, wagonToBeLoaded=${wagonToBeLoaded}, tempLoadedBagCount=${tempLoadedBagCount}`);
       }
 
       // ✅ FIX: Preserve existing loading times if they exist
@@ -1029,15 +1040,30 @@ const { trainId } = req.params;
       const loadingStartTime = existingTimes.loading_start_time || null;
       const loadingEndTime = existingTimes.loading_end_time || null;
 
-      // ✅ FIX: Preserve bag counts if frontend sends 0 but DB has values
-      // This prevents overwriting counts from the bag counting system
-      const loadedBagCount = (w.loaded_bag_count == 0 || w.loaded_bag_count == null) && existingTimes.loaded_bag_count > 0
+      // ✅ FIX: Preserve bag counts from database (frontend no longer sends them)
+      // Since frontend doesn't send loaded_bag_count/unloaded_bag_count, always use preserved values
+      const loadedBagCount = existingTimes.loaded_bag_count != null && existingTimes.loaded_bag_count !== undefined
         ? existingTimes.loaded_bag_count
-        : (w.loaded_bag_count || 0);
+        : (w.loaded_bag_count != null ? Number(w.loaded_bag_count) : 0);
 
-      const unloadedBagCount = (w.unloaded_bag_count == 0 || w.unloaded_bag_count == null) && existingTimes.unloaded_bag_count > 0
+      const unloadedBagCount = existingTimes.unloaded_bag_count != null && existingTimes.unloaded_bag_count !== undefined
         ? existingTimes.unloaded_bag_count
-        : (w.unloaded_bag_count || 0);
+        : (w.unloaded_bag_count != null ? Number(w.unloaded_bag_count) : 0);
+      
+      // ✅ CRITICAL FIX: Recalculate loading_status if it wasn't provided, using preserved bag counts
+      // This ensures correct status when frontend doesn't send loading_status but condition is met
+      if (w.loading_status === undefined || w.loading_status === null) {
+        const wagonToBeLoaded = w.wagon_to_be_loaded != null && w.wagon_to_be_loaded !== ""
+          ? Number(w.wagon_to_be_loaded)
+          : null;
+        
+        // Recalculate using preserved bag counts
+        loadingStatus = wagonToBeLoaded != null
+          ? (loadedBagCount >= wagonToBeLoaded && loadedBagCount > 0)
+          : false;
+        
+        console.log(`[DRAFT SAVE] Recalculated loading_status=${loadingStatus} using preserved bag counts for wagon tower_number=${w.tower_number}, loadedBagCount=${loadedBagCount}, wagonToBeLoaded=${wagonToBeLoaded}`);
+      }
 
       // ✅ FIX: Log if times are being lost (for debugging)
       if (w.tower_number && !loadingStartTime && !loadingEndTime && Object.keys(existingTimesMap).length > 0) {
@@ -1090,7 +1116,14 @@ const { trainId } = req.params;
           unloadedBagCount,
           loadingStartTime,
           loadingEndTime,
-          w.seal_number || null,
+          (() => {
+            // ✅ CRITICAL FIX: Always process seal_number, regardless of indent_number
+            const sealNum = (w.seal_number && String(w.seal_number).trim() !== "") ? String(w.seal_number).trim() : null;
+            console.log(`[DRAFT SAVE] Saving seal_number for wagon tower_number=${w.tower_number}, indent_number=${indentNum || 'empty'}, seal_number="${sealNum}", wagon_number=${w.wagon_number || 'N/A'}`);
+            console.log(`[DRAFT SAVE] Full wagon object keys:`, Object.keys(w));
+            console.log(`[DRAFT SAVE] w.seal_number value:`, w.seal_number, `type:`, typeof w.seal_number);
+            return sealNum;
+          })(),
           w.stoppage_time || 0,
           w.remarks || null,
           loadingStatus,
