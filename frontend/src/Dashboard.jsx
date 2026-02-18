@@ -437,15 +437,16 @@ function Dashboard() {
       return;
     }
     
-    // Check if indent_number has been filled (indicates user already made their choice)
+    // Check if indent_number has been filled OR multiple_indent_confirmed flag is set
+    // (indicates user already made their choice)
     try {
       const res = await fetch(`${API_BASE}/train/${encodeURIComponent(trainId)}/edit`);
       
       if (res.ok) {
         const data = await res.json();
         
-        // If indent_number is filled in any dashboard_records row, user already made their choice - skip popup
-        if (data.header.indent_number) {
+        // If indent_number is filled OR multiple_indent_confirmed flag is set, user already made their choice - skip popup
+        if (data.header.indent_number || data.header.multiple_indent_confirmed) {
           // Navigate without indent_number (will get first available row)
           navigate(`/train/${encodeURIComponent(trainId)}/edit`);
           return;
@@ -455,7 +456,7 @@ function Dashboard() {
       console.error("Error checking train data:", err);
     }
     
-    // No indent_number filled - show popup
+    // No indent_number filled and flag not set - show popup
     setShowEditPopup(true);
   };
 

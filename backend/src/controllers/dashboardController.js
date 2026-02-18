@@ -69,7 +69,11 @@ const getDashboardData = async (req, res) => {
                 SELECT STRING_AGG(DISTINCT w_comm.commodity, ', ' ORDER BY w_comm.commodity)
                 FROM wagon_records w_comm
               WHERE w_comm.rake_serial_number = d.rake_serial_number
-                  AND (d.single_indent = true OR w_comm.indent_number = d.indent_number)
+                  AND (
+                    d.single_indent = true 
+                    OR w_comm.indent_number = d.indent_number
+                    OR (d.single_indent = false AND (d.indent_number IS NULL OR d.indent_number = ''))
+                  )
                   AND w_comm.commodity IS NOT NULL
                   AND w_comm.commodity != ''
               ),
@@ -80,7 +84,11 @@ const getDashboardData = async (req, res) => {
               SELECT w_first.loading_start_time
               FROM wagon_records w_first
             WHERE w_first.rake_serial_number = d.rake_serial_number
-                AND (d.single_indent = true OR w_first.indent_number = d.indent_number)
+                AND (
+                  d.single_indent = true 
+                  OR w_first.indent_number = d.indent_number
+                  OR (d.single_indent = false AND (d.indent_number IS NULL OR d.indent_number = ''))
+                )
                 AND w_first.loading_start_time IS NOT NULL
               ORDER BY w_first.tower_number ASC
               LIMIT 1
@@ -92,19 +100,31 @@ const getDashboardData = async (req, res) => {
                   SELECT COUNT(*) 
                   FROM wagon_records w_all
                   WHERE w_all.rake_serial_number = d.rake_serial_number
-                    AND (d.single_indent = true OR w_all.indent_number = d.indent_number)
+                    AND (
+                      d.single_indent = true 
+                      OR w_all.indent_number = d.indent_number
+                      OR (d.single_indent = false AND (d.indent_number IS NULL OR d.indent_number = ''))
+                    )
                 ) = (
                   SELECT COUNT(*) 
                   FROM wagon_records w_filled
                   WHERE w_filled.rake_serial_number = d.rake_serial_number
-                    AND (d.single_indent = true OR w_filled.indent_number = d.indent_number)
+                    AND (
+                      d.single_indent = true 
+                      OR w_filled.indent_number = d.indent_number
+                      OR (d.single_indent = false AND (d.indent_number IS NULL OR d.indent_number = ''))
+                    )
                     AND w_filled.loading_end_time IS NOT NULL
                 )
                 THEN (
                   SELECT w_last.loading_end_time
                   FROM wagon_records w_last
                   WHERE w_last.rake_serial_number = d.rake_serial_number
-                    AND (d.single_indent = true OR w_last.indent_number = d.indent_number)
+                    AND (
+                      d.single_indent = true 
+                      OR w_last.indent_number = d.indent_number
+                      OR (d.single_indent = false AND (d.indent_number IS NULL OR d.indent_number = ''))
+                    )
                     AND w_last.loading_end_time IS NOT NULL
                   ORDER BY w_last.tower_number DESC
                   LIMIT 1
@@ -119,7 +139,11 @@ const getDashboardData = async (req, res) => {
           FROM dashboard_records d
           JOIN customers c ON c.id = d.customer_id
         LEFT JOIN wagon_records w ON w.rake_serial_number = d.rake_serial_number
-            AND (d.single_indent = true OR w.indent_number = d.indent_number)
+            AND (
+              d.single_indent = true 
+              OR w.indent_number = d.indent_number
+              OR (d.single_indent = false AND (d.indent_number IS NULL OR d.indent_number = ''))
+            )
           WHERE d.customer_id = $1
             -- Exclude parent records when child records (with sequential numbers) exist
             AND NOT (
@@ -166,7 +190,11 @@ const getDashboardData = async (req, res) => {
                 SELECT STRING_AGG(DISTINCT w_comm.commodity, ', ' ORDER BY w_comm.commodity)
                 FROM wagon_records w_comm
               WHERE w_comm.rake_serial_number = d.rake_serial_number
-                  AND (d.single_indent = true OR w_comm.indent_number = d.indent_number)
+                  AND (
+                    d.single_indent = true 
+                    OR w_comm.indent_number = d.indent_number
+                    OR (d.single_indent = false AND (d.indent_number IS NULL OR d.indent_number = ''))
+                  )
                   AND w_comm.commodity IS NOT NULL
                   AND w_comm.commodity != ''
               ),
@@ -177,7 +205,11 @@ const getDashboardData = async (req, res) => {
               SELECT w_first.loading_start_time
               FROM wagon_records w_first
             WHERE w_first.rake_serial_number = d.rake_serial_number
-                AND (d.single_indent = true OR w_first.indent_number = d.indent_number)
+                AND (
+                  d.single_indent = true 
+                  OR w_first.indent_number = d.indent_number
+                  OR (d.single_indent = false AND (d.indent_number IS NULL OR d.indent_number = ''))
+                )
                 AND w_first.loading_start_time IS NOT NULL
               ORDER BY w_first.tower_number ASC
               LIMIT 1
@@ -189,19 +221,31 @@ const getDashboardData = async (req, res) => {
                   SELECT COUNT(*) 
                   FROM wagon_records w_all
                   WHERE w_all.rake_serial_number = d.rake_serial_number
-                    AND (d.single_indent = true OR w_all.indent_number = d.indent_number)
+                    AND (
+                      d.single_indent = true 
+                      OR w_all.indent_number = d.indent_number
+                      OR (d.single_indent = false AND (d.indent_number IS NULL OR d.indent_number = ''))
+                    )
                 ) = (
                   SELECT COUNT(*) 
                   FROM wagon_records w_filled
                   WHERE w_filled.rake_serial_number = d.rake_serial_number
-                    AND (d.single_indent = true OR w_filled.indent_number = d.indent_number)
+                    AND (
+                      d.single_indent = true 
+                      OR w_filled.indent_number = d.indent_number
+                      OR (d.single_indent = false AND (d.indent_number IS NULL OR d.indent_number = ''))
+                    )
                     AND w_filled.loading_end_time IS NOT NULL
                 )
                 THEN (
                   SELECT w_last.loading_end_time
                   FROM wagon_records w_last
                   WHERE w_last.rake_serial_number = d.rake_serial_number
-                    AND (d.single_indent = true OR w_last.indent_number = d.indent_number)
+                    AND (
+                      d.single_indent = true 
+                      OR w_last.indent_number = d.indent_number
+                      OR (d.single_indent = false AND (d.indent_number IS NULL OR d.indent_number = ''))
+                    )
                     AND w_last.loading_end_time IS NOT NULL
                   ORDER BY w_last.tower_number DESC
                   LIMIT 1
@@ -224,7 +268,11 @@ const getDashboardData = async (req, res) => {
           FROM dashboard_records d
           LEFT JOIN customers c ON c.id = d.customer_id
         LEFT JOIN wagon_records w ON w.rake_serial_number = d.rake_serial_number
-            AND (d.single_indent = true OR w.indent_number = d.indent_number)
+            AND (
+              d.single_indent = true 
+              OR w.indent_number = d.indent_number
+              OR (d.single_indent = false AND (d.indent_number IS NULL OR d.indent_number = ''))
+            )
           WHERE 
             d.status != 'CANCELLED'
             -- Exclude parent records when child records (with sequential numbers) exist
@@ -273,7 +321,11 @@ const getDashboardData = async (req, res) => {
                 SELECT STRING_AGG(DISTINCT w_comm.commodity, ', ' ORDER BY w_comm.commodity)
                 FROM wagon_records w_comm
               WHERE w_comm.rake_serial_number = d.rake_serial_number
-                  AND (d.single_indent = true OR w_comm.indent_number = d.indent_number)
+                  AND (
+                    d.single_indent = true 
+                    OR w_comm.indent_number = d.indent_number
+                    OR (d.single_indent = false AND (d.indent_number IS NULL OR d.indent_number = ''))
+                  )
                   AND w_comm.commodity IS NOT NULL
                   AND w_comm.commodity != ''
               ),
@@ -284,7 +336,11 @@ const getDashboardData = async (req, res) => {
               SELECT w_first.loading_start_time
               FROM wagon_records w_first
             WHERE w_first.rake_serial_number = d.rake_serial_number
-                AND (d.single_indent = true OR w_first.indent_number = d.indent_number)
+                AND (
+                  d.single_indent = true 
+                  OR w_first.indent_number = d.indent_number
+                  OR (d.single_indent = false AND (d.indent_number IS NULL OR d.indent_number = ''))
+                )
                 AND w_first.loading_start_time IS NOT NULL
               ORDER BY w_first.tower_number ASC
               LIMIT 1
@@ -296,19 +352,31 @@ const getDashboardData = async (req, res) => {
                   SELECT COUNT(*) 
                   FROM wagon_records w_all
                   WHERE w_all.rake_serial_number = d.rake_serial_number
-                    AND (d.single_indent = true OR w_all.indent_number = d.indent_number)
+                    AND (
+                      d.single_indent = true 
+                      OR w_all.indent_number = d.indent_number
+                      OR (d.single_indent = false AND (d.indent_number IS NULL OR d.indent_number = ''))
+                    )
                 ) = (
                   SELECT COUNT(*) 
                   FROM wagon_records w_filled
                   WHERE w_filled.rake_serial_number = d.rake_serial_number
-                    AND (d.single_indent = true OR w_filled.indent_number = d.indent_number)
+                    AND (
+                      d.single_indent = true 
+                      OR w_filled.indent_number = d.indent_number
+                      OR (d.single_indent = false AND (d.indent_number IS NULL OR d.indent_number = ''))
+                    )
                     AND w_filled.loading_end_time IS NOT NULL
                 )
                 THEN (
                   SELECT w_last.loading_end_time
                   FROM wagon_records w_last
                   WHERE w_last.rake_serial_number = d.rake_serial_number
-                    AND (d.single_indent = true OR w_last.indent_number = d.indent_number)
+                    AND (
+                      d.single_indent = true 
+                      OR w_last.indent_number = d.indent_number
+                      OR (d.single_indent = false AND (d.indent_number IS NULL OR d.indent_number = ''))
+                    )
                     AND w_last.loading_end_time IS NOT NULL
                   ORDER BY w_last.tower_number DESC
                   LIMIT 1
@@ -331,7 +399,11 @@ const getDashboardData = async (req, res) => {
           FROM dashboard_records d
           LEFT JOIN customers c ON c.id = d.customer_id
         LEFT JOIN wagon_records w ON w.rake_serial_number = d.rake_serial_number
-            AND (d.single_indent = true OR w.indent_number = d.indent_number)
+            AND (
+              d.single_indent = true 
+              OR w.indent_number = d.indent_number
+              OR (d.single_indent = false AND (d.indent_number IS NULL OR d.indent_number = ''))
+            )
           WHERE 1=1
             -- Exclude parent records when child records (with sequential numbers) exist
             AND NOT (
