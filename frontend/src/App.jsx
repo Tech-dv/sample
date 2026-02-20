@@ -8,6 +8,7 @@ import RandomCountingList from "./RandomCountingList";
 import TaskView from "./TaskView";
 import Reports from "./Reports";
 import ViewTrain from "./ViewTrain";
+import CustomerViewTrain from "./CustomerViewTrain";
 import TrainEdit from "./TrainEdit";
 import DispatchPage from "./DispatchPage";
 import ReviewerVerify from "./ReviewerVerify";
@@ -97,6 +98,14 @@ function App() {
         element={
           <ProtectedRoute>
             <ViewTrain />
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/customer/view/:trainId" 
+        element={
+          <ProtectedRoute>
+            <CustomerViewTrain />
           </ProtectedRoute>
         } 
       />

@@ -1,5 +1,7 @@
 const pool = require("../config/database");
 const { generateTrainId, generateNextUniqueRakeSerialNumber } = require("../services/trainService");
+const { sendAlertEmail } = require("../services/emailService");
+const { isValidEmail } = require("../utils/emailValidator");
 const XLSX = require("xlsx");
 const fs = require("fs");
 const path = require("path");
@@ -115,7 +117,7 @@ const createTrain = async (req, res) => {
 
 
 const viewTrain = async (req, res) => {
-const { trainId } = req.params;
+  const { trainId } = req.params;
   // trainId may be URL encoded (e.g., "2025-26%2F01%2F001"), decode it
   const decodedTrainId = decodeURIComponent(trainId);
   const role = req.headers["x-user-role"];
@@ -301,7 +303,7 @@ const { trainId } = req.params;
 };
 
 const editTrain = async (req, res) => {
-const { trainId } = req.params;
+  const { trainId } = req.params;
   // trainId may be URL encoded (e.g., "2025-26%2F01%2F001"), decode it
   const decodedTrainId = decodeURIComponent(trainId);
   const indentNumber = req.query.indent_number; // Optional: filter by indent
@@ -460,7 +462,7 @@ const { trainId } = req.params;
 };
 
 const saveDraft = async (req, res) => {
-const { trainId } = req.params;
+  const { trainId } = req.params;
   const { header, wagons, editOptions } = req.body;
   const singleIndent = editOptions?.singleIndent !== undefined ? editOptions.singleIndent : true;
   const hlOnly = editOptions?.wagonTypeHL !== undefined ? editOptions.wagonTypeHL : false;
@@ -559,11 +561,11 @@ const { trainId } = req.params;
       "SELECT siding FROM train_session WHERE rake_serial_number = $1 LIMIT 1",
       [rakeSerialNumber]
     );
-    
-    // Get existing dashboard record to preserve siding and created_time
+
+    // Get existing dashboard record to preserve siding, created_time, and detect customer mapping
     // ✅ FIX: Search for base rake_serial_number OR sequential rake_serial_number
     const existingRecord = await pool.query(
-      `SELECT siding, created_time 
+      `SELECT siding, created_time, customer_id 
        FROM dashboard_records 
        WHERE (rake_serial_number = $1 OR rake_serial_number LIKE $2)
        AND (indent_number IS NULL OR indent_number = '')
@@ -571,6 +573,9 @@ const { trainId } = req.params;
        LIMIT 1`,
       [rakeSerialNumber, `${rakeSerialNumber}-%`]
     );
+
+    // Track previous customer_id for detecting new customer mapping
+    const previousCustomerId = existingRecord.rows[0]?.customer_id || null;
 
     // Priority:
     // 1. Siding from train_session (Master record)
@@ -686,7 +691,7 @@ const { trainId } = req.params;
       const firstWagonDestination = wagons.find(w => w.wagon_destination)?.wagon_destination || null;
 
       // ✅ FIX: Check if multiple indent mode is confirmed (user selected multiple indent AND filled at least 1 indent number)
-      const hasIndentNumbers = wagons.some(w => 
+      const hasIndentNumbers = wagons.some(w =>
         w.indent_number && w.indent_number.trim() !== ''
       );
       const multipleIndentConfirmed = !singleIndent && hasIndentNumbers;
@@ -756,7 +761,7 @@ const { trainId } = req.params;
       // Get all existing wagons for this train - use rake_serial_number only
       const queryParams = [rakeSerialNumber];
       let queryConditions = `rake_serial_number = $1`;
-      
+
       const existingWagons = await pool.query(
         `SELECT wagon_number, tower_number, indent_number, loading_start_time, loading_end_time, loaded_bag_count, unloaded_bag_count
          FROM wagon_records 
@@ -803,7 +808,7 @@ const { trainId } = req.params;
         // ✅ FIX: Use rake_serial_number only
         const queryParams = [rakeSerialNumber, indentNumbersInWagons];
         let queryConditions = `rake_serial_number = $1 AND (indent_number = ANY($2) OR indent_number IS NULL OR indent_number = '')`;
-        
+
         const existingWagons = await pool.query(
           `SELECT wagon_number, tower_number, indent_number, loading_start_time, loading_end_time, loaded_bag_count, unloaded_bag_count
            FROM wagon_records 
@@ -878,13 +883,13 @@ const { trainId } = req.params;
     for (const w of wagons) {
       // ✅ DEBUG: Log seal_number to verify it's being received
       console.log(`[DRAFT SAVE] Processing wagon tower_number=${w.tower_number}, wagon_number=${w.wagon_number || 'N/A'}, seal_number=${w.seal_number || 'null/undefined'}, seal_number type=${typeof w.seal_number}`);
-      
+
       // ✅ FIX: Normalize indent_number (treat null and empty string the same)
       // This is used for loading times preservation
       const indentNum = (w.indent_number && w.indent_number.trim() !== "")
         ? w.indent_number.trim()
         : ((header?.indent_number && header.indent_number.trim() !== "") ? header.indent_number.trim() : '');
-      
+
       // ✅ FIX: ALWAYS use base rake_serial_number during Save - no splitting
       // Splitting only happens when user clicks Proceed -> Yes in the popup
       const wagonRakeSerialNumber = rakeSerialNumber;
@@ -904,7 +909,7 @@ const { trainId } = req.params;
         const wagonToBeLoaded = w.wagon_to_be_loaded != null && w.wagon_to_be_loaded !== ""
           ? Number(w.wagon_to_be_loaded)
           : null;
-        
+
         // Get preserved bag count (will be set later from existingTimes)
         // For now, try to get from w.loaded_bag_count if available, otherwise will use preserved value
         const tempLoadedBagCount = Number(w.loaded_bag_count) || 0;
@@ -916,7 +921,7 @@ const { trainId } = req.params;
         loadingStatus = wagonToBeLoaded != null
           ? (tempLoadedBagCount >= wagonToBeLoaded && tempLoadedBagCount > 0)
           : false;
-        
+
         console.log(`[DRAFT SAVE] Calculated loading_status=${loadingStatus} for wagon tower_number=${w.tower_number}, wagon_number=${w.wagon_number || 'N/A'}, wagonToBeLoaded=${wagonToBeLoaded}, tempLoadedBagCount=${tempLoadedBagCount}`);
       }
 
@@ -991,17 +996,17 @@ const { trainId } = req.params;
         const towerNumStr = String(w.tower_number);
         for (const [key, times] of Object.entries(existingTimesMap)) {
           // Check if key contains tower_number and matches indent (if applicable)
-          const hasTowerMatch = key.includes(`tower_${towerNumStr}`) || 
-                               key.startsWith(`tower_${towerNumStr}_`) ||
-                               key === `tower_${towerNumStr}`;
-          
+          const hasTowerMatch = key.includes(`tower_${towerNumStr}`) ||
+            key.startsWith(`tower_${towerNumStr}_`) ||
+            key === `tower_${towerNumStr}`;
+
           if (hasTowerMatch) {
             // For single indent, any tower match is valid
             // For multiple indent, check if indent matches or key has no indent suffix
-            const isValidMatch = singleIndent || 
-                                 key.includes(`indent_${indentNum}`) || 
-                                 (!key.includes('_indent_') && (!indentNum || indentNum === ''));
-            
+            const isValidMatch = singleIndent ||
+              key.includes(`indent_${indentNum}`) ||
+              (!key.includes('_indent_') && (!indentNum || indentNum === ''));
+
             if (isValidMatch && (times.loading_start_time || times.loading_end_time)) {
               existingTimes = times;
               matchedStrategy = 'tower_number (search fallback)';
@@ -1023,19 +1028,19 @@ const { trainId } = req.params;
       const unloadedBagCount = existingTimes.unloaded_bag_count != null && existingTimes.unloaded_bag_count !== undefined
         ? existingTimes.unloaded_bag_count
         : (w.unloaded_bag_count != null ? Number(w.unloaded_bag_count) : 0);
-      
+
       // ✅ CRITICAL FIX: Recalculate loading_status if it wasn't provided, using preserved bag counts
       // This ensures correct status when frontend doesn't send loading_status but condition is met
       if (w.loading_status === undefined || w.loading_status === null) {
         const wagonToBeLoaded = w.wagon_to_be_loaded != null && w.wagon_to_be_loaded !== ""
           ? Number(w.wagon_to_be_loaded)
           : null;
-        
+
         // Recalculate using preserved bag counts
         loadingStatus = wagonToBeLoaded != null
           ? (loadedBagCount >= wagonToBeLoaded && loadedBagCount > 0)
           : false;
-        
+
         console.log(`[DRAFT SAVE] Recalculated loading_status=${loadingStatus} using preserved bag counts for wagon tower_number=${w.tower_number}, loadedBagCount=${loadedBagCount}, wagonToBeLoaded=${wagonToBeLoaded}`);
       }
 
@@ -1045,7 +1050,7 @@ const { trainId } = req.params;
         console.log(`[DEBUG] Available keys in existingTimesMap:`, Object.keys(existingTimesMap));
         console.log(`[DEBUG] rakeSerialNumber: ${rakeSerialNumber}, original trainId: ${trainId}`);
       }
-      
+
       // ✅ FIX: Log when times ARE preserved (for verification)
       if (loadingStartTime || loadingEndTime) {
         console.log(`[SUCCESS] Preserved loading times for wagon tower_number=${w.tower_number}, indent_number=${indentNum}, wagon_number=${w.wagon_number || 'N/A'}: start=${loadingStartTime || 'null'}, end=${loadingEndTime || 'null'} (matched via: ${matchedStrategy || 'unknown'})`);
@@ -1126,7 +1131,7 @@ const { trainId } = req.params;
     // The generateMultipleRakeSerial endpoint handles splitting explicitly
     // This prevents automatic splitting when Save is clicked
     console.log(`[DYNAMIC ASSIGN] Dynamic assignment DISABLED for Save button. Splitting only occurs on Proceed button.`);
-    
+
     // ============================================
     // DYNAMIC ASSIGNMENT BLOCK - COMPLETELY DISABLED
     // This entire block is disabled to prevent splitting on Save button
@@ -1434,12 +1439,12 @@ const { trainId } = req.params;
 
       // Compare wagon changes
       const wagonChanges = [];
-      
+
       // Build multiple maps for robust matching
       const existingWagonsByTowerNumber = new Map();
       const existingWagonsByIndex = new Map();
       const existingWagonsByWagonNumber = new Map();
-      
+
       // Build maps of existing wagons using multiple criteria
       existingWagons.forEach((w, idx) => {
         // Map by tower_number (primary key)
@@ -1469,7 +1474,7 @@ const { trainId } = req.params;
       wagons.forEach((w, idx) => {
         let existingWagon = null;
         let matchMethod = '';
-        
+
         // Try multiple matching strategies
         // 1. Try by tower_number (most reliable)
         if (w.tower_number != null) {
@@ -1478,7 +1483,7 @@ const { trainId } = req.params;
             matchMethod = 'tower_number';
           }
         }
-        
+
         // 2. Try by index (fallback)
         if (!existingWagon) {
           existingWagon = existingWagonsByIndex.get(String(idx));
@@ -1486,7 +1491,7 @@ const { trainId } = req.params;
             matchMethod = 'index';
           }
         }
-        
+
         // 3. Try by wagon_number (additional fallback)
         if (!existingWagon && w.wagon_number != null && w.wagon_number !== '') {
           existingWagon = existingWagonsByWagonNumber.get(String(w.wagon_number).trim());
@@ -1494,7 +1499,7 @@ const { trainId } = req.params;
             matchMethod = 'wagon_number';
           }
         }
-        
+
         // Debug: Log matching result
         if (existingWagon) {
           console.log(`[ACTIVITY TIMELINE] Wagon ${idx} matched by ${matchMethod}: tower_number=${w.tower_number}, existing_tower_number=${existingWagon.tower_number}`);
@@ -1571,8 +1576,8 @@ const { trainId } = req.params;
             console.log(`[ACTIVITY TIMELINE] Found ${wagonChangesForThisWagon.length} change(s) for Wagon ${w.tower_number != null ? w.tower_number : idx + 1}`);
             wagonChangesForThisWagon.forEach(change => {
               // Use actual wagon_number if available, otherwise fall back to tower_number
-              const wagonLabel = (w.wagon_number && String(w.wagon_number).trim() !== "") 
-                ? String(w.wagon_number).trim() 
+              const wagonLabel = (w.wagon_number && String(w.wagon_number).trim() !== "")
+                ? String(w.wagon_number).trim()
                 : `Wagon ${w.tower_number != null ? w.tower_number : idx + 1}`;
               wagonChanges.push({
                 wagon: wagonLabel,
@@ -1589,8 +1594,8 @@ const { trainId } = req.params;
         } else {
           // New wagon added
           // Use actual wagon_number if available, otherwise fall back to tower_number
-          const wagonLabel = (w.wagon_number && String(w.wagon_number).trim() !== "") 
-            ? String(w.wagon_number).trim() 
+          const wagonLabel = (w.wagon_number && String(w.wagon_number).trim() !== "")
+            ? String(w.wagon_number).trim()
             : `Wagon ${w.tower_number != null ? w.tower_number : idx + 1}`;
           wagonChanges.push({
             wagon: wagonLabel,
@@ -1626,15 +1631,15 @@ const { trainId } = req.params;
       existingWagons.forEach((w, idx) => {
         if (!matchedExistingWagons.has(w)) {
           // Use actual wagon_number if available, otherwise fall back to tower_number
-          const wagonLabel = (w.wagon_number && String(w.wagon_number).trim() !== "") 
-            ? String(w.wagon_number).trim() 
+          const wagonLabel = (w.wagon_number && String(w.wagon_number).trim() !== "")
+            ? String(w.wagon_number).trim()
             : `Wagon ${w.tower_number != null ? w.tower_number : idx + 1}`;
-        wagonChanges.push({
+          wagonChanges.push({
             wagon: wagonLabel,
-          field: "Status",
-          oldValue: "Exists",
-          newValue: "Deleted",
-        });
+            field: "Status",
+            oldValue: "Exists",
+            newValue: "Deleted",
+          });
           console.log(`[ACTIVITY TIMELINE] Wagon deleted: ${wagonLabel}`);
         }
       });
@@ -1667,7 +1672,7 @@ const { trainId } = req.params;
             `${wagon} (${changes.join("; ")})`
           ).join(" | ");
           changeDescriptions.push(`Wagons: ${wagonDesc}`);
-          
+
           // Debug: Log grouped changes
           console.log(`[ACTIVITY TIMELINE] Grouped wagon changes:`, Object.keys(wagonGroups).map(w => `${w}: ${wagonGroups[w].length} change(s)`).join(', '));
         }
@@ -1678,11 +1683,11 @@ const { trainId } = req.params;
           wagonChanges: wagonChanges,
           timestamp: new Date().toISOString()
         };
-        
+
         // Store both human-readable notes and structured change details as JSON
         const notes = `Reviewer made changes: ${changeDescriptions.join(" | ")}`;
         const changeDetailsJson = JSON.stringify(changeDetails);
-        
+
         // Store notes with change details JSON appended (separated by special marker)
         const notesWithDetails = `${notes}|||CHANGE_DETAILS:${changeDetailsJson}`;
 
@@ -1702,6 +1707,82 @@ const { trainId } = req.params;
       // ✅ FIX: Don't log if there are no changes (user only wants edited fields watched)
     }
 
+    // ─── Customer "Loading Started" notification ───
+    // When an admin maps a customer to a rake (Save/Proceed), send a notification
+    // email to the customer. Only send if:
+    //   1. A customer_id is now assigned (from header or wagons)
+    //   2. The customer_id was NOT previously assigned (new mapping)
+    const newCustomerId = header?.customer_id
+      ? Number(header.customer_id)
+      : (wagons.find(w => w.customer_id)?.customer_id
+        ? Number(wagons.find(w => w.customer_id).customer_id)
+        : null);
+
+    if (newCustomerId && (!previousCustomerId || Number(previousCustomerId) !== newCustomerId)) {
+      // Fire-and-forget: don't block the response for email sending
+      (async () => {
+        try {
+          // Fetch customer email from users table
+          const customerEmailRes = await pool.query(
+            `SELECT u.email, c.customer_name
+             FROM users u
+             JOIN customers c ON c.id = u.customer_id
+             WHERE u.customer_id = $1
+               AND u.role = 'CUSTOMER'
+               AND u.is_active = true
+               AND u.email IS NOT NULL
+               AND u.email <> ''
+             LIMIT 1`,
+            [newCustomerId]
+          );
+
+          if (customerEmailRes.rows.length === 0) {
+            console.log(`[CUSTOMER-NOTIFY] No valid email found for customer_id=${newCustomerId} – skipping`);
+            return;
+          }
+
+          const { email: customerEmail, customer_name: customerName } = customerEmailRes.rows[0];
+
+          if (!isValidEmail(customerEmail)) {
+            console.log(`[CUSTOMER-NOTIFY] Invalid email "${customerEmail}" for customer_id=${newCustomerId} – skipping`);
+            return;
+          }
+
+          const subject = `Loading Started – Rake ${rakeSerialNumber}`;
+          const html = `
+            <div style="font-family:Arial,sans-serif;max-width:700px;">
+              <h2 style="color:#27ae60;">🚛 Loading Started</h2>
+              <p>Dear <strong>${customerName || "Customer"}</strong>,</p>
+              <p>Your rake has been assigned and loading is ready to begin.</p>
+              <table style="border-collapse:collapse;width:100%;margin:16px 0;">
+                <thead>
+                  <tr style="background:#0B3A6E;color:#fff;">
+                    <th style="padding:8px 12px;text-align:left;">Rake Serial</th>
+                    <th style="padding:8px 12px;text-align:left;">Siding</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${rakeSerialNumber}</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${siding || "-"}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p style="color:#555;font-size:13px;">
+                Notification sent at: ${new Date().toLocaleString()}<br/>
+                Please monitor the dashboard for loading progress.
+              </p>
+            </div>
+          `;
+
+          await sendAlertEmail([customerEmail], subject, html);
+          console.log(`[CUSTOMER-NOTIFY] "Loading Started" email sent to ${customerEmail} for rake ${rakeSerialNumber}`);
+        } catch (emailErr) {
+          console.error(`[CUSTOMER-NOTIFY] Failed to send email for rake ${rakeSerialNumber}:`, emailErr.message);
+        }
+      })();
+    }
+
     // Return updated train_ids if any sequential numbers were assigned
     const response = { message: "Draft saved successfully" };
     if (Object.keys(updatedTrainIds).length > 0) {
@@ -1717,7 +1798,7 @@ const { trainId } = req.params;
 };
 
 const getDispatch = async (req, res) => {
-const { trainId } = req.params;
+  const { trainId } = req.params;
   // trainId may be URL encoded (e.g., "2025-26%2F02%2F001"), decode it
   const decodedTrainId = decodeURIComponent(trainId);
   const indentNumber = req.query.indent_number; // Support Case 2: multiple indents with same train_id
@@ -1949,56 +2030,56 @@ const { trainId } = req.params;
 };
 
 const saveDispatchDraft = async (req, res) => {
-const { trainId } = req.params;
-    // trainId may be URL encoded (e.g., "2025-26%2F02%2F001"), decode it
-    const decodedTrainId = decodeURIComponent(trainId);
-    // ✅ FIX: Normalize indent_number (treat null, undefined, and empty string consistently)
-    const rawIndentNumber = req.query.indent_number || (req.body && req.body.indent_number) || null;
-    const indentNumber = rawIndentNumber && rawIndentNumber.trim() !== "" ? rawIndentNumber.trim() : null;
-    const data = req.body || {}; // partial fields only
+  const { trainId } = req.params;
+  // trainId may be URL encoded (e.g., "2025-26%2F02%2F001"), decode it
+  const decodedTrainId = decodeURIComponent(trainId);
+  // ✅ FIX: Normalize indent_number (treat null, undefined, and empty string consistently)
+  const rawIndentNumber = req.query.indent_number || (req.body && req.body.indent_number) || null;
+  const indentNumber = rawIndentNumber && rawIndentNumber.trim() !== "" ? rawIndentNumber.trim() : null;
+  const data = req.body || {}; // partial fields only
 
-    try {
-      // ✅ FIX: URL trainId is now always rake_serial_number
-      // No need to resolve - use it directly
-      const rakeSerialNumber = decodedTrainId;
+  try {
+    // ✅ FIX: URL trainId is now always rake_serial_number
+    // No need to resolve - use it directly
+    const rakeSerialNumber = decodedTrainId;
 
-      // ✅ FIX: Fetch siding from dashboard_records
-      let siding = null;
-      let headerQuery, headerParams;
+    // ✅ FIX: Fetch siding from dashboard_records
+    let siding = null;
+    let headerQuery, headerParams;
+    if (indentNumber) {
+      headerQuery = "SELECT siding FROM dashboard_records WHERE rake_serial_number = $1 AND indent_number = $2 LIMIT 1";
+      headerParams = [rakeSerialNumber, indentNumber];
+    } else {
+      headerQuery = "SELECT siding FROM dashboard_records WHERE rake_serial_number = $1 AND (indent_number IS NULL OR indent_number = '') LIMIT 1";
+      headerParams = [rakeSerialNumber];
+    }
+    const headerRes = await pool.query(headerQuery, headerParams);
+    if (headerRes.rows.length > 0) {
+      siding = headerRes.rows[0].siding || null;
+    }
+
+    // 1️⃣ Check if dispatch record exists for this train (and optionally indent_number)
+    // ✅ FIX: Use both train_id and rake_serial_number for queries
+    let existsQuery, existsParams;
+    if (indentNumber) {
+      existsQuery = "SELECT 1 FROM dispatch_records WHERE rake_serial_number = $1 AND indent_number = $2";
+      existsParams = [rakeSerialNumber, indentNumber];
+    } else {
+      existsQuery = "SELECT 1 FROM dispatch_records WHERE rake_serial_number = $1 AND (indent_number IS NULL OR indent_number = '')";
+      existsParams = [rakeSerialNumber];
+    }
+
+    const existsRes = await pool.query(existsQuery, existsParams);
+
+    /* =====================================================
+       INSERT (FIRST TIME ONLY)
+    ===================================================== */
+    if (existsRes.rows.length === 0) {
+      // ✅ FIX: Fetch loading times from wagon_records instead of using request body
+      // Auto-populated fields should NEVER come from frontend - always fetch from wagon_records
+      let wagonTimeQuery, wagonTimeParams;
       if (indentNumber) {
-        headerQuery = "SELECT siding FROM dashboard_records WHERE rake_serial_number = $1 AND indent_number = $2 LIMIT 1";
-        headerParams = [rakeSerialNumber, indentNumber];
-      } else {
-        headerQuery = "SELECT siding FROM dashboard_records WHERE rake_serial_number = $1 AND (indent_number IS NULL OR indent_number = '') LIMIT 1";
-        headerParams = [rakeSerialNumber];
-      }
-      const headerRes = await pool.query(headerQuery, headerParams);
-      if (headerRes.rows.length > 0) {
-        siding = headerRes.rows[0].siding || null;
-      }
-
-      // 1️⃣ Check if dispatch record exists for this train (and optionally indent_number)
-      // ✅ FIX: Use both train_id and rake_serial_number for queries
-      let existsQuery, existsParams;
-      if (indentNumber) {
-        existsQuery = "SELECT 1 FROM dispatch_records WHERE rake_serial_number = $1 AND indent_number = $2";
-        existsParams = [rakeSerialNumber, indentNumber];
-      } else {
-        existsQuery = "SELECT 1 FROM dispatch_records WHERE rake_serial_number = $1 AND (indent_number IS NULL OR indent_number = '')";
-        existsParams = [rakeSerialNumber];
-      }
-
-      const existsRes = await pool.query(existsQuery, existsParams);
-
-      /* =====================================================
-         INSERT (FIRST TIME ONLY)
-      ===================================================== */
-      if (existsRes.rows.length === 0) {
-        // ✅ FIX: Fetch loading times from wagon_records instead of using request body
-        // Auto-populated fields should NEVER come from frontend - always fetch from wagon_records
-        let wagonTimeQuery, wagonTimeParams;
-        if (indentNumber) {
-          wagonTimeQuery = `
+        wagonTimeQuery = `
             SELECT 
               loading_start_time,
               loading_end_time
@@ -2006,9 +2087,9 @@ const { trainId } = req.params;
             WHERE rake_serial_number = $1 AND indent_number=$2
             ORDER BY tower_number ASC
           `;
-          wagonTimeParams = [rakeSerialNumber, indentNumber];
-        } else {
-          wagonTimeQuery = `
+        wagonTimeParams = [rakeSerialNumber, indentNumber];
+      } else {
+        wagonTimeQuery = `
             SELECT 
               loading_start_time,
               loading_end_time
@@ -2016,32 +2097,32 @@ const { trainId } = req.params;
             WHERE rake_serial_number = $1
             ORDER BY tower_number ASC
           `;
-          wagonTimeParams = [rakeSerialNumber];
+        wagonTimeParams = [rakeSerialNumber];
+      }
+
+      const wagonTimeRes = await pool.query(wagonTimeQuery, wagonTimeParams);
+
+      // Calculate times from wagon_records
+      let calculatedRakeLoadingStart = null;
+      let calculatedRakeLoadingEnd = null;
+
+      if (wagonTimeRes.rows.length > 0) {
+        // First wagon's loading_start_time (ordered by tower_number)
+        const firstWagon = wagonTimeRes.rows.find(w => w.loading_start_time);
+        if (firstWagon) {
+          calculatedRakeLoadingStart = firstWagon.loading_start_time;
         }
 
-        const wagonTimeRes = await pool.query(wagonTimeQuery, wagonTimeParams);
-        
-        // Calculate times from wagon_records
-        let calculatedRakeLoadingStart = null;
-        let calculatedRakeLoadingEnd = null;
-        
-        if (wagonTimeRes.rows.length > 0) {
-          // First wagon's loading_start_time (ordered by tower_number)
-          const firstWagon = wagonTimeRes.rows.find(w => w.loading_start_time);
-          if (firstWagon) {
-            calculatedRakeLoadingStart = firstWagon.loading_start_time;
-          }
-
-          // Last wagon's loading_end_time (ordered by tower_number)
-          const reversedWagons = [...wagonTimeRes.rows].reverse();
-          const lastWagon = reversedWagons.find(w => w.loading_end_time);
-          if (lastWagon) {
-            calculatedRakeLoadingEnd = lastWagon.loading_end_time;
-          }
+        // Last wagon's loading_end_time (ordered by tower_number)
+        const reversedWagons = [...wagonTimeRes.rows].reverse();
+        const lastWagon = reversedWagons.find(w => w.loading_end_time);
+        if (lastWagon) {
+          calculatedRakeLoadingEnd = lastWagon.loading_end_time;
         }
+      }
 
-        await pool.query(
-          `
+      await pool.query(
+        `
           INSERT INTO dispatch_records (
             source,
             siding,
@@ -2090,40 +2171,40 @@ const { trainId } = req.params;
             $19
           )
           `,
-          [
-            'KSLK', // source
-            siding || null, // siding (from headerRes)
-            data.indent_wagon_count || null,
-            data.vessel_name || null,
-            data.rake_type || null,
-            data.rake_placement_datetime || null,
-            data.rake_clearance_datetime || null,
-            data.rake_idle_time || null,
-            calculatedRakeLoadingStart, // ✅ FIX: Use calculated value from wagon_records
-            calculatedRakeLoadingEnd, // ✅ FIX: Use calculated value from wagon_records
-            data.rake_loading_end_railway || null,
-            data.door_closing_datetime || null,
-            data.rake_haul_out_datetime || null,
-            data.loading_start_officer || null,
-            data.loading_completion_officer || null,
-            data.remarks || null,
-            data.rr_number || null,
-            indentNumber,
-            rakeSerialNumber,
-          ]
-        );
+        [
+          'KSLK', // source
+          siding || null, // siding (from headerRes)
+          data.indent_wagon_count || null,
+          data.vessel_name || null,
+          data.rake_type || null,
+          data.rake_placement_datetime || null,
+          data.rake_clearance_datetime || null,
+          data.rake_idle_time || null,
+          calculatedRakeLoadingStart, // ✅ FIX: Use calculated value from wagon_records
+          calculatedRakeLoadingEnd, // ✅ FIX: Use calculated value from wagon_records
+          data.rake_loading_end_railway || null,
+          data.door_closing_datetime || null,
+          data.rake_haul_out_datetime || null,
+          data.loading_start_officer || null,
+          data.loading_completion_officer || null,
+          data.remarks || null,
+          data.rr_number || null,
+          indentNumber,
+          rakeSerialNumber,
+        ]
+      );
 
-        return res.json({ message: "Dispatch draft created successfully" });
-      }
+      return res.json({ message: "Dispatch draft created successfully" });
+    }
 
-      /* =====================================================
-         GET CURRENT VALUES FOR CHANGE TRACKING
-      ===================================================== */
-      // ✅ FIX: Get current dispatch record to track changes made by reviewer
-      // Use rakeSerialNumber for all queries
-      let currentRecordQuery, currentRecordParams;
-      if (indentNumber) {
-        currentRecordQuery = `
+    /* =====================================================
+       GET CURRENT VALUES FOR CHANGE TRACKING
+    ===================================================== */
+    // ✅ FIX: Get current dispatch record to track changes made by reviewer
+    // Use rakeSerialNumber for all queries
+    let currentRecordQuery, currentRecordParams;
+    if (indentNumber) {
+      currentRecordQuery = `
           SELECT indent_wagon_count, vessel_name, rake_type, rake_placement_datetime,
                  rake_clearance_datetime, rake_idle_time, loading_start_officer,
                  loading_completion_officer, remarks, rr_number, rake_loading_end_railway,
@@ -2132,9 +2213,9 @@ const { trainId } = req.params;
           FROM dispatch_records
           WHERE rake_serial_number = $1 AND indent_number = $2
         `;
-        currentRecordParams = [rakeSerialNumber, indentNumber];
-      } else {
-        currentRecordQuery = `
+      currentRecordParams = [rakeSerialNumber, indentNumber];
+    } else {
+      currentRecordQuery = `
           SELECT indent_wagon_count, vessel_name, rake_type, rake_placement_datetime,
                  rake_clearance_datetime, rake_idle_time, loading_start_officer,
                  loading_completion_officer, remarks, rr_number, rake_loading_end_railway,
@@ -2143,124 +2224,124 @@ const { trainId } = req.params;
           FROM dispatch_records
           WHERE rake_serial_number = $1 AND (indent_number IS NULL OR indent_number = '')
         `;
-        currentRecordParams = [rakeSerialNumber];
-      }
+      currentRecordParams = [rakeSerialNumber];
+    }
 
-      const currentRecordRes = await pool.query(currentRecordQuery, currentRecordParams);
-      const currentRecord = currentRecordRes.rows[0] || {};
+    const currentRecordRes = await pool.query(currentRecordQuery, currentRecordParams);
+    const currentRecord = currentRecordRes.rows[0] || {};
 
-      /* =====================================================
-         DYNAMIC UPDATE (ONLY CHANGED FIELDS)
-      ===================================================== */
-      // ✅ FIX: Exclude auto-populated fields (rake_loading_start_datetime, rake_loading_end_actual)
-      // These fields are calculated from wagon_records and should NEVER be updated by frontend saves
-      const allowedFields = [
-        "indent_wagon_count",
-        "vessel_name",
-        "rake_type",
-        "rake_placement_datetime",
-        "rake_clearance_datetime",
-        "rake_idle_time",
-        "loading_start_officer",
-        "loading_completion_officer",
-        "remarks",
-        "rr_number",
-        "rake_loading_end_railway",
-        "door_closing_datetime",
-        "rake_haul_out_datetime",
-        // ✅ FIX: Removed rake_loading_start_datetime and rake_loading_end_actual - these are auto-populated
-      ];
+    /* =====================================================
+       DYNAMIC UPDATE (ONLY CHANGED FIELDS)
+    ===================================================== */
+    // ✅ FIX: Exclude auto-populated fields (rake_loading_start_datetime, rake_loading_end_actual)
+    // These fields are calculated from wagon_records and should NEVER be updated by frontend saves
+    const allowedFields = [
+      "indent_wagon_count",
+      "vessel_name",
+      "rake_type",
+      "rake_placement_datetime",
+      "rake_clearance_datetime",
+      "rake_idle_time",
+      "loading_start_officer",
+      "loading_completion_officer",
+      "remarks",
+      "rr_number",
+      "rake_loading_end_railway",
+      "door_closing_datetime",
+      "rake_haul_out_datetime",
+      // ✅ FIX: Removed rake_loading_start_datetime and rake_loading_end_actual - these are auto-populated
+    ];
 
-      // Field display names for activity timeline
-      const fieldDisplayNames = {
-        "indent_wagon_count": "Indent Wagon Count",
-        "vessel_name": "Vessel Name",
-        "rake_type": "Rake Type",
-        "rake_placement_datetime": "Rake Placement Date & Time",
-        "rake_clearance_datetime": "Rake Clearance Time",
-        "rake_idle_time": "Rake Idle Time",
-        "loading_start_officer": "Loading Start Officer",
-        "loading_completion_officer": "Loading Completion Officer",
-        "remarks": "Remarks",
-        "rr_number": "RR Number",
-        "rake_loading_end_railway": "Rake Loading End Date & Time Railway",
-        "door_closing_datetime": "Door Closing Date & Time",
-        "rake_haul_out_datetime": "Rake Haul Out Date & Time",
-        // ✅ FIX: Removed auto-populated fields from display names
-      };
+    // Field display names for activity timeline
+    const fieldDisplayNames = {
+      "indent_wagon_count": "Indent Wagon Count",
+      "vessel_name": "Vessel Name",
+      "rake_type": "Rake Type",
+      "rake_placement_datetime": "Rake Placement Date & Time",
+      "rake_clearance_datetime": "Rake Clearance Time",
+      "rake_idle_time": "Rake Idle Time",
+      "loading_start_officer": "Loading Start Officer",
+      "loading_completion_officer": "Loading Completion Officer",
+      "remarks": "Remarks",
+      "rr_number": "RR Number",
+      "rake_loading_end_railway": "Rake Loading End Date & Time Railway",
+      "door_closing_datetime": "Door Closing Date & Time",
+      "rake_haul_out_datetime": "Rake Haul Out Date & Time",
+      // ✅ FIX: Removed auto-populated fields from display names
+    };
 
-      const updates = [];
-      const values = [];
-      let index = 1;
-      const changes = [];
+    const updates = [];
+    const values = [];
+    let index = 1;
+    const changes = [];
 
-      for (const field of allowedFields) {
-        if (field in data) {
-          const oldValue = currentRecord[field];
-          // ✅ FIX: Preserve empty strings as empty strings, only convert undefined/null to null
-          // This ensures that if a field is explicitly set to empty string, it's preserved
-          // Only convert to null if the value is actually null or undefined
-          let newValue = data[field];
-          if (newValue === undefined || newValue === null) {
-            newValue = null;
-          } else if (typeof newValue === 'string' && newValue.trim() === '') {
-            // Empty string - keep as null in database (consistent with existing behavior)
-            newValue = null;
-          }
+    for (const field of allowedFields) {
+      if (field in data) {
+        const oldValue = currentRecord[field];
+        // ✅ FIX: Preserve empty strings as empty strings, only convert undefined/null to null
+        // This ensures that if a field is explicitly set to empty string, it's preserved
+        // Only convert to null if the value is actually null or undefined
+        let newValue = data[field];
+        if (newValue === undefined || newValue === null) {
+          newValue = null;
+        } else if (typeof newValue === 'string' && newValue.trim() === '') {
+          // Empty string - keep as null in database (consistent with existing behavior)
+          newValue = null;
+        }
 
-          // Track changes (compare as strings to handle null/empty)
-          const oldValStr = oldValue != null ? String(oldValue).trim() : "";
-          const newValStr = newValue != null ? String(newValue).trim() : "";
+        // Track changes (compare as strings to handle null/empty)
+        const oldValStr = oldValue != null ? String(oldValue).trim() : "";
+        const newValStr = newValue != null ? String(newValue).trim() : "";
 
-          if (oldValStr !== newValStr) {
-            changes.push({
-              field: fieldDisplayNames[field] || field,
-              oldValue: oldValStr || "(empty)",
-              newValue: newValStr || "(empty)",
-            });
-          }
+        if (oldValStr !== newValStr) {
+          changes.push({
+            field: fieldDisplayNames[field] || field,
+            oldValue: oldValStr || "(empty)",
+            newValue: newValStr || "(empty)",
+          });
+        }
 
-          // ✅ FIX: Only update if there's an actual change
-          if (oldValStr !== newValStr) {
-            updates.push(`${field} = $${index}`);
-            values.push(newValue);
-            index++;
-          }
+        // ✅ FIX: Only update if there's an actual change
+        if (oldValStr !== newValStr) {
+          updates.push(`${field} = $${index}`);
+          values.push(newValue);
+          index++;
         }
       }
+    }
 
-      // Get reviewer username if present
-      const reviewerUsername = req.headers["x-reviewer-username"];
+    // Get reviewer username if present
+    const reviewerUsername = req.headers["x-reviewer-username"];
 
-      // Always keep status as DRAFT on save
-      updates.push(`status = 'DRAFT'`);
+    // Always keep status as DRAFT on save
+    updates.push(`status = 'DRAFT'`);
 
-      values.push(rakeSerialNumber);
+    values.push(rakeSerialNumber);
 
-      // Build WHERE clause with train_id/rake_serial_number and optionally indent_number
-      // ✅ FIX: Use both train_id and rake_serial_number for queries
-      let whereClause = `WHERE rake_serial_number = $${index}`;
-      if (indentNumber) {
-        index++;
-        whereClause += ` AND indent_number = $${index}`;
-        values.push(indentNumber);
-      } else {
-        whereClause += ` AND (indent_number IS NULL OR indent_number = '')`;
-      }
+    // Build WHERE clause with train_id/rake_serial_number and optionally indent_number
+    // ✅ FIX: Use both train_id and rake_serial_number for queries
+    let whereClause = `WHERE rake_serial_number = $${index}`;
+    if (indentNumber) {
+      index++;
+      whereClause += ` AND indent_number = $${index}`;
+      values.push(indentNumber);
+    } else {
+      whereClause += ` AND (indent_number IS NULL OR indent_number = '')`;
+    }
 
-      const updateQuery = `
+    const updateQuery = `
         UPDATE dispatch_records
         SET ${updates.join(", ")}
         ${whereClause}
       `;
 
-      await pool.query(updateQuery, values);
+    await pool.query(updateQuery, values);
 
-      // ✅ FIX: Always update auto-populated fields from wagon_records after user fields are updated
-      // This ensures loading times are always current, regardless of what frontend sends
-      let wagonTimeQuery, wagonTimeParams;
-      if (indentNumber) {
-        wagonTimeQuery = `
+    // ✅ FIX: Always update auto-populated fields from wagon_records after user fields are updated
+    // This ensures loading times are always current, regardless of what frontend sends
+    let wagonTimeQuery, wagonTimeParams;
+    if (indentNumber) {
+      wagonTimeQuery = `
           SELECT 
             loading_start_time,
             loading_end_time
@@ -2268,9 +2349,9 @@ const { trainId } = req.params;
           WHERE rake_serial_number = $1 AND indent_number=$2
           ORDER BY tower_number ASC
         `;
-        wagonTimeParams = [rakeSerialNumber, indentNumber];
-      } else {
-        wagonTimeQuery = `
+      wagonTimeParams = [rakeSerialNumber, indentNumber];
+    } else {
+      wagonTimeQuery = `
           SELECT 
             loading_start_time,
             loading_end_time
@@ -2278,149 +2359,149 @@ const { trainId } = req.params;
           WHERE rake_serial_number = $1
           ORDER BY tower_number ASC
         `;
-        wagonTimeParams = [rakeSerialNumber];
+      wagonTimeParams = [rakeSerialNumber];
+    }
+
+    const wagonTimeRes = await pool.query(wagonTimeQuery, wagonTimeParams);
+
+    // Calculate times from wagon_records
+    let calculatedRakeLoadingStart = null;
+    let calculatedRakeLoadingEnd = null;
+
+    if (wagonTimeRes.rows.length > 0) {
+      // First wagon's loading_start_time (ordered by tower_number)
+      const firstWagon = wagonTimeRes.rows.find(w => w.loading_start_time);
+      if (firstWagon) {
+        calculatedRakeLoadingStart = firstWagon.loading_start_time;
       }
 
-      const wagonTimeRes = await pool.query(wagonTimeQuery, wagonTimeParams);
-      
-      // Calculate times from wagon_records
-      let calculatedRakeLoadingStart = null;
-      let calculatedRakeLoadingEnd = null;
-      
-      if (wagonTimeRes.rows.length > 0) {
-        // First wagon's loading_start_time (ordered by tower_number)
-        const firstWagon = wagonTimeRes.rows.find(w => w.loading_start_time);
-        if (firstWagon) {
-          calculatedRakeLoadingStart = firstWagon.loading_start_time;
-        }
-
-        // Last wagon's loading_end_time (ordered by tower_number)
-        const reversedWagons = [...wagonTimeRes.rows].reverse();
-        const lastWagon = reversedWagons.find(w => w.loading_end_time);
-        if (lastWagon) {
-          calculatedRakeLoadingEnd = lastWagon.loading_end_time;
-        }
+      // Last wagon's loading_end_time (ordered by tower_number)
+      const reversedWagons = [...wagonTimeRes.rows].reverse();
+      const lastWagon = reversedWagons.find(w => w.loading_end_time);
+      if (lastWagon) {
+        calculatedRakeLoadingEnd = lastWagon.loading_end_time;
       }
+    }
 
-      // Update auto-populated fields from wagon_records
-      if (indentNumber) {
-        await pool.query(
-          `UPDATE dispatch_records 
+    // Update auto-populated fields from wagon_records
+    if (indentNumber) {
+      await pool.query(
+        `UPDATE dispatch_records 
            SET rake_loading_start_datetime = $1, rake_loading_end_actual = $2
            WHERE rake_serial_number = $3 AND indent_number = $4`,
-          [calculatedRakeLoadingStart, calculatedRakeLoadingEnd, rakeSerialNumber, indentNumber]
-        );
-      } else {
-        await pool.query(
-          `UPDATE dispatch_records 
+        [calculatedRakeLoadingStart, calculatedRakeLoadingEnd, rakeSerialNumber, indentNumber]
+      );
+    } else {
+      await pool.query(
+        `UPDATE dispatch_records 
            SET rake_loading_start_datetime = $1, rake_loading_end_actual = $2
            WHERE rake_serial_number = $3 AND (indent_number IS NULL OR indent_number = '')`,
-          [calculatedRakeLoadingStart, calculatedRakeLoadingEnd, rakeSerialNumber]
-        );
-      }
-
-      // ✅ FIX: Add activity timeline entry for reviewer changes (only if there are actual changes)
-      if (reviewerUsername && changes.length > 0) {
-        // Format changes for activity timeline
-        const changeDescriptions = changes.map(c =>
-          `${c.field}: "${c.oldValue}" → "${c.newValue}"`
-        ).join("; ");
-
-        await addActivityTimelineEntry(
-          trainId,
-          indentNumber || null,
-          'REVIEWER_EDITED',
-          reviewerUsername,
-          `Reviewer made changes: ${changeDescriptions}`
-        );
-      }
-      // ✅ FIX: Don't log if there are no changes (user only wants edited fields watched)
-
-      res.json({ message: "Dispatch draft updated successfully" });
-    } catch (err) {
-      console.error("DISPATCH DRAFT ERROR:", err);
-      res.status(500).json({ message: "Failed to save dispatch draft" });
+        [calculatedRakeLoadingStart, calculatedRakeLoadingEnd, rakeSerialNumber]
+      );
     }
+
+    // ✅ FIX: Add activity timeline entry for reviewer changes (only if there are actual changes)
+    if (reviewerUsername && changes.length > 0) {
+      // Format changes for activity timeline
+      const changeDescriptions = changes.map(c =>
+        `${c.field}: "${c.oldValue}" → "${c.newValue}"`
+      ).join("; ");
+
+      await addActivityTimelineEntry(
+        trainId,
+        indentNumber || null,
+        'REVIEWER_EDITED',
+        reviewerUsername,
+        `Reviewer made changes: ${changeDescriptions}`
+      );
+    }
+    // ✅ FIX: Don't log if there are no changes (user only wants edited fields watched)
+
+    res.json({ message: "Dispatch draft updated successfully" });
+  } catch (err) {
+    console.error("DISPATCH DRAFT ERROR:", err);
+    res.status(500).json({ message: "Failed to save dispatch draft" });
+  }
 };
 
 const submitDispatch = async (req, res) => {
-const { trainId } = req.params;
-    // trainId may be URL encoded (e.g., "2025-26%2F02%2F001"), decode it
-    const decodedTrainId = decodeURIComponent(trainId);
-    const indentNumber = req.query.indent_number || (req.body && req.body.indent_number) || null; // Support Case 2
-    const { rr_number, rake_loading_end_railway, door_closing_datetime, rake_haul_out_datetime } = req.body || {}; // ✅ FIX: Only get user input fields, NOT auto-populated fields
-    const username = req.body.username || req.headers["x-username"] || null; // Get username from body or header
-    const role = req.headers["x-user-role"];
+  const { trainId } = req.params;
+  // trainId may be URL encoded (e.g., "2025-26%2F02%2F001"), decode it
+  const decodedTrainId = decodeURIComponent(trainId);
+  const indentNumber = req.query.indent_number || (req.body && req.body.indent_number) || null; // Support Case 2
+  const { rr_number, rake_loading_end_railway, door_closing_datetime, rake_haul_out_datetime } = req.body || {}; // ✅ FIX: Only get user input fields, NOT auto-populated fields
+  const username = req.body.username || req.headers["x-username"] || null; // Get username from body or header
+  const role = req.headers["x-user-role"];
 
-    try {
-      // ✅ FIX: First, resolve the actual train_id from train_session or dashboard_records
-      // The URL trainId might be either train_id or rake_serial_number
-      // ✅ FIX: URL trainId is now always rake_serial_number
-      const rakeSerialNumber = decodedTrainId;
-      // Use user-provided rr_number if available; keep it NULL when empty (no auto-generate)
-      const rrNumber = rr_number && rr_number.trim() !== ""
-        ? rr_number.trim()
-        : null;
+  try {
+    // ✅ FIX: First, resolve the actual train_id from train_session or dashboard_records
+    // The URL trainId might be either train_id or rake_serial_number
+    // ✅ FIX: URL trainId is now always rake_serial_number
+    const rakeSerialNumber = decodedTrainId;
+    // Use user-provided rr_number if available; keep it NULL when empty (no auto-generate)
+    const rrNumber = rr_number && rr_number.trim() !== ""
+      ? rr_number.trim()
+      : null;
 
-      // Build update fields dynamically
-      const updateFields = ["status='SUBMITTED'", "rr_number=$1", "submitted_by=$2", "submitted_at=NOW()"];
-      const updateValues = [rrNumber, username];
-      let paramIndex = 3;
+    // Build update fields dynamically
+    const updateFields = ["status='SUBMITTED'", "rr_number=$1", "submitted_by=$2", "submitted_at=NOW()"];
+    const updateValues = [rrNumber, username];
+    let paramIndex = 3;
 
-      // Add rake_loading_end_railway if provided
-      if (rake_loading_end_railway !== undefined && rake_loading_end_railway !== null) {
-        updateFields.push(`rake_loading_end_railway=$${paramIndex}`);
-        updateValues.push(rake_loading_end_railway || null);
-        paramIndex++;
-      }
+    // Add rake_loading_end_railway if provided
+    if (rake_loading_end_railway !== undefined && rake_loading_end_railway !== null) {
+      updateFields.push(`rake_loading_end_railway=$${paramIndex}`);
+      updateValues.push(rake_loading_end_railway || null);
+      paramIndex++;
+    }
 
-      // Add door_closing_datetime if provided
-      if (door_closing_datetime !== undefined && door_closing_datetime !== null) {
-        updateFields.push(`door_closing_datetime=$${paramIndex}`);
-        updateValues.push(door_closing_datetime || null);
-        paramIndex++;
-      }
+    // Add door_closing_datetime if provided
+    if (door_closing_datetime !== undefined && door_closing_datetime !== null) {
+      updateFields.push(`door_closing_datetime=$${paramIndex}`);
+      updateValues.push(door_closing_datetime || null);
+      paramIndex++;
+    }
 
-      // Add rake_haul_out_datetime if provided
-      if (rake_haul_out_datetime !== undefined && rake_haul_out_datetime !== null) {
-        updateFields.push(`rake_haul_out_datetime=$${paramIndex}`);
-        updateValues.push(rake_haul_out_datetime || null);
-        paramIndex++;
-      }
+    // Add rake_haul_out_datetime if provided
+    if (rake_haul_out_datetime !== undefined && rake_haul_out_datetime !== null) {
+      updateFields.push(`rake_haul_out_datetime=$${paramIndex}`);
+      updateValues.push(rake_haul_out_datetime || null);
+      paramIndex++;
+    }
 
-      // ✅ FIX: DO NOT add auto-populated fields (rake_loading_start_datetime, rake_loading_end_actual) from request body
-      // These will be fetched from wagon_records and updated separately
+    // ✅ FIX: DO NOT add auto-populated fields (rake_loading_start_datetime, rake_loading_end_actual) from request body
+    // These will be fetched from wagon_records and updated separately
 
-      // Update dispatch_records
-      // ✅ FIX: Use both train_id and rake_serial_number for queries (matching sample pattern but with our dual-column support)
-      let dispatchUpdateQuery, dispatchParams;
-      if (indentNumber) {
-        updateValues.push(rakeSerialNumber);
-        updateValues.push(indentNumber);
-        dispatchUpdateQuery = `
+    // Update dispatch_records
+    // ✅ FIX: Use both train_id and rake_serial_number for queries (matching sample pattern but with our dual-column support)
+    let dispatchUpdateQuery, dispatchParams;
+    if (indentNumber) {
+      updateValues.push(rakeSerialNumber);
+      updateValues.push(indentNumber);
+      dispatchUpdateQuery = `
           UPDATE dispatch_records SET
             ${updateFields.join(", ")}
           WHERE rake_serial_number=$${paramIndex} AND indent_number=$${paramIndex + 1}
         `;
-        dispatchParams = updateValues;
-      } else {
-        updateValues.push(rakeSerialNumber);
-        dispatchUpdateQuery = `
+      dispatchParams = updateValues;
+    } else {
+      updateValues.push(rakeSerialNumber);
+      dispatchUpdateQuery = `
           UPDATE dispatch_records SET
             ${updateFields.join(", ")}
           WHERE rake_serial_number=$${paramIndex} AND (indent_number IS NULL OR indent_number = '')
         `;
-        dispatchParams = updateValues;
-      }
+      dispatchParams = updateValues;
+    }
 
-      await pool.query(dispatchUpdateQuery, dispatchParams);
+    await pool.query(dispatchUpdateQuery, dispatchParams);
 
-      // ✅ FIX: Always fetch latest loading times from wagon_records to ensure they're preserved
-      // This ensures we always have the latest times from wagon_records, even if request doesn't include them
-      // ✅ FIX: Use both train_id and rake_serial_number for queries
-      let wagonTimeQuery, wagonTimeParams;
-      if (indentNumber) {
-        wagonTimeQuery = `
+    // ✅ FIX: Always fetch latest loading times from wagon_records to ensure they're preserved
+    // This ensures we always have the latest times from wagon_records, even if request doesn't include them
+    // ✅ FIX: Use both train_id and rake_serial_number for queries
+    let wagonTimeQuery, wagonTimeParams;
+    if (indentNumber) {
+      wagonTimeQuery = `
           SELECT 
             loading_start_time,
             loading_end_time
@@ -2428,9 +2509,9 @@ const { trainId } = req.params;
           WHERE rake_serial_number = $1 AND indent_number=$2
           ORDER BY tower_number ASC
         `;
-        wagonTimeParams = [rakeSerialNumber, indentNumber];
-      } else {
-        wagonTimeQuery = `
+      wagonTimeParams = [rakeSerialNumber, indentNumber];
+    } else {
+      wagonTimeQuery = `
           SELECT 
             loading_start_time,
             loading_end_time
@@ -2438,122 +2519,283 @@ const { trainId } = req.params;
           WHERE rake_serial_number = $1
           ORDER BY tower_number ASC
         `;
-        wagonTimeParams = [rakeSerialNumber];
+      wagonTimeParams = [rakeSerialNumber];
+    }
+
+    const wagonTimeRes = await pool.query(wagonTimeQuery, wagonTimeParams);
+
+    // ✅ FIX: Calculate times from wagon_records (always use these, never from request)
+    let calculatedRakeLoadingStart = null;
+    let calculatedRakeLoadingEnd = null;
+
+    if (wagonTimeRes.rows.length > 0) {
+      // First wagon's loading_start_time (ordered by tower_number)
+      const firstWagon = wagonTimeRes.rows.find(w => w.loading_start_time);
+      if (firstWagon) {
+        calculatedRakeLoadingStart = firstWagon.loading_start_time;
       }
 
-      const wagonTimeRes = await pool.query(wagonTimeQuery, wagonTimeParams);
-      
-      // ✅ FIX: Calculate times from wagon_records (always use these, never from request)
-      let calculatedRakeLoadingStart = null;
-      let calculatedRakeLoadingEnd = null;
-      
-      if (wagonTimeRes.rows.length > 0) {
-        // First wagon's loading_start_time (ordered by tower_number)
-        const firstWagon = wagonTimeRes.rows.find(w => w.loading_start_time);
-        if (firstWagon) {
-          calculatedRakeLoadingStart = firstWagon.loading_start_time;
-        }
-
-        // Last wagon's loading_end_time (ordered by tower_number)
-        const reversedWagons = [...wagonTimeRes.rows].reverse();
-        const lastWagon = reversedWagons.find(w => w.loading_end_time);
-        if (lastWagon) {
-          calculatedRakeLoadingEnd = lastWagon.loading_end_time;
-        }
+      // Last wagon's loading_end_time (ordered by tower_number)
+      const reversedWagons = [...wagonTimeRes.rows].reverse();
+      const lastWagon = reversedWagons.find(w => w.loading_end_time);
+      if (lastWagon) {
+        calculatedRakeLoadingEnd = lastWagon.loading_end_time;
       }
-      
-      // ✅ FIX: Update dispatch_records with calculated times from wagon_records
-      if (indentNumber) {
-        await pool.query(
-          `UPDATE dispatch_records 
+    }
+
+    // ✅ FIX: Update dispatch_records with calculated times from wagon_records
+    if (indentNumber) {
+      await pool.query(
+        `UPDATE dispatch_records 
            SET rake_loading_start_datetime = $1, rake_loading_end_actual = $2
            WHERE rake_serial_number = $3 AND indent_number = $4`,
-          [calculatedRakeLoadingStart, calculatedRakeLoadingEnd, rakeSerialNumber, indentNumber]
-        );
-      } else {
-        await pool.query(
-          `UPDATE dispatch_records 
+        [calculatedRakeLoadingStart, calculatedRakeLoadingEnd, rakeSerialNumber, indentNumber]
+      );
+    } else {
+      await pool.query(
+        `UPDATE dispatch_records 
            SET rake_loading_start_datetime = $1, rake_loading_end_actual = $2
            WHERE rake_serial_number = $3 AND (indent_number IS NULL OR indent_number = '')`,
-          [calculatedRakeLoadingStart, calculatedRakeLoadingEnd, rakeSerialNumber]
-        );
-      }
-      
-      // Log for debugging
-      console.log(`[DISPATCH SUBMIT] Loading times for ${rakeSerialNumber} (indent: ${indentNumber || 'none'}):`, {
-        fromWagonRecords: {
-          start: calculatedRakeLoadingStart,
-          end: calculatedRakeLoadingEnd,
-          wagonCount: wagonTimeRes.rows.length
-        }
-      });
-
-      // Update dashboard_records based on role
-      // Note: rake_loading_start_datetime and rake_loading_end_actual are calculated on-the-fly from wagon_records
-      // in the dashboard query, so we don't need to store them in dashboard_records
-      // ✅ FIX: Use rakeSerialNumber and handle both base and sequential rake_serial_number
-      // ✅ FIX: Preserve assigned_reviewer when updating status (UPDATE only sets status, so assigned_reviewer is preserved automatically)
-      let dashboardUpdateQuery, dashboardParams, activityType, activityNotes;
-      if (role === "SUPER_ADMIN") {
-        // SUPER_ADMIN: final approval, mark directly as APPROVED (Rake Loading Completed)
-        if (indentNumber) {
-          // ✅ FIX: Search for base rake_serial_number OR sequential rake_serial_number
-          dashboardUpdateQuery = "UPDATE dashboard_records SET status='APPROVED' WHERE (rake_serial_number = $1 OR rake_serial_number LIKE $2) AND indent_number=$3";
-          dashboardParams = [rakeSerialNumber, `${rakeSerialNumber}-%`, indentNumber];
-        } else {
-          // ✅ FIX: Search for base rake_serial_number OR sequential rake_serial_number
-          dashboardUpdateQuery = "UPDATE dashboard_records SET status='APPROVED' WHERE (rake_serial_number = $1 OR rake_serial_number LIKE $2)";
-          dashboardParams = [rakeSerialNumber, `${rakeSerialNumber}-%`];
-        }
-        activityType = 'APPROVED';
-        activityNotes = 'Entry has been approved by SUPER_ADMIN';
-      } else {
-        // ADMIN: submit for reviewer approval
-        // ✅ FIX: Preserve assigned_reviewer (UPDATE only sets status, so assigned_reviewer is preserved automatically)
-        if (indentNumber) {
-          // ✅ FIX: Search for base rake_serial_number OR sequential rake_serial_number
-          dashboardUpdateQuery = "UPDATE dashboard_records SET status='PENDING_APPROVAL' WHERE (rake_serial_number = $1 OR rake_serial_number LIKE $2) AND indent_number=$3";
-          dashboardParams = [rakeSerialNumber, `${rakeSerialNumber}-%`, indentNumber];
-        } else {
-          // ✅ FIX: Search for base rake_serial_number OR sequential rake_serial_number
-          dashboardUpdateQuery = "UPDATE dashboard_records SET status='PENDING_APPROVAL' WHERE (rake_serial_number = $1 OR rake_serial_number LIKE $2)";
-          dashboardParams = [rakeSerialNumber, `${rakeSerialNumber}-%`];
-        }
-        activityType = 'SUBMITTED';
-        activityNotes = 'Record submitted for review';
-      }
-
-      await pool.query(dashboardUpdateQuery, dashboardParams);
-      
-      // ✅ FIX: Ensure wagon times are preserved - verify they exist after submit
-      // The dashboard calculates times from wagon_records, so we need to ensure wagon times are not cleared
-      console.log(`[DISPATCH SUBMIT] Calculated times for ${rakeSerialNumber} (indent: ${indentNumber || 'none'}):`, {
-        rake_loading_start_datetime: calculatedRakeLoadingStart,
-        rake_loading_end_actual: calculatedRakeLoadingEnd,
-        source: "wagon_records" // ✅ FIX: Always from wagon_records, never from request
-      });
-
-      // Add activity timeline entry for submission/approval
-      // ✅ FIX: Use rakeSerialNumber instead of trainId
-      if (username) {
-        await addActivityTimelineEntry(
-          rakeSerialNumber,
-          indentNumber || null,
-          activityType,
-          username,
-          activityNotes
-        );
-      }
-
-      res.json({ message: "Submitted successfully" });
-    } catch (err) {
-      console.error("DISPATCH SUBMIT ERROR:", err);
-      res.status(500).json({ message: "Submit failed" });
+        [calculatedRakeLoadingStart, calculatedRakeLoadingEnd, rakeSerialNumber]
+      );
     }
+
+    // Log for debugging
+    console.log(`[DISPATCH SUBMIT] Loading times for ${rakeSerialNumber} (indent: ${indentNumber || 'none'}):`, {
+      fromWagonRecords: {
+        start: calculatedRakeLoadingStart,
+        end: calculatedRakeLoadingEnd,
+        wagonCount: wagonTimeRes.rows.length
+      }
+    });
+
+    // Update dashboard_records based on role
+    // Note: rake_loading_start_datetime and rake_loading_end_actual are calculated on-the-fly from wagon_records
+    // in the dashboard query, so we don't need to store them in dashboard_records
+    // ✅ FIX: Use rakeSerialNumber and handle both base and sequential rake_serial_number
+    // ✅ FIX: Preserve assigned_reviewer when updating status (UPDATE only sets status, so assigned_reviewer is preserved automatically)
+    let dashboardUpdateQuery, dashboardParams, activityType, activityNotes;
+    if (role === "SUPER_ADMIN") {
+      // SUPER_ADMIN: final approval, mark directly as APPROVED (Rake Loading Completed)
+      if (indentNumber) {
+        // ✅ FIX: Search for base rake_serial_number OR sequential rake_serial_number
+        dashboardUpdateQuery = "UPDATE dashboard_records SET status='APPROVED' WHERE (rake_serial_number = $1 OR rake_serial_number LIKE $2) AND indent_number=$3";
+        dashboardParams = [rakeSerialNumber, `${rakeSerialNumber}-%`, indentNumber];
+      } else {
+        // ✅ FIX: Search for base rake_serial_number OR sequential rake_serial_number
+        dashboardUpdateQuery = "UPDATE dashboard_records SET status='APPROVED' WHERE (rake_serial_number = $1 OR rake_serial_number LIKE $2)";
+        dashboardParams = [rakeSerialNumber, `${rakeSerialNumber}-%`];
+      }
+      activityType = 'APPROVED';
+      activityNotes = 'Entry has been approved by SUPER_ADMIN';
+    } else {
+      // ADMIN: submit for reviewer approval
+      // ✅ FIX: Preserve assigned_reviewer (UPDATE only sets status, so assigned_reviewer is preserved automatically)
+      if (indentNumber) {
+        // ✅ FIX: Search for base rake_serial_number OR sequential rake_serial_number
+        dashboardUpdateQuery = "UPDATE dashboard_records SET status='PENDING_APPROVAL' WHERE (rake_serial_number = $1 OR rake_serial_number LIKE $2) AND indent_number=$3";
+        dashboardParams = [rakeSerialNumber, `${rakeSerialNumber}-%`, indentNumber];
+      } else {
+        // ✅ FIX: Search for base rake_serial_number OR sequential rake_serial_number
+        dashboardUpdateQuery = "UPDATE dashboard_records SET status='PENDING_APPROVAL' WHERE (rake_serial_number = $1 OR rake_serial_number LIKE $2)";
+        dashboardParams = [rakeSerialNumber, `${rakeSerialNumber}-%`];
+      }
+      activityType = 'SUBMITTED';
+      activityNotes = 'Record submitted for review';
+    }
+
+    await pool.query(dashboardUpdateQuery, dashboardParams);
+
+    // ─── Notify reviewers when SUPER_ADMIN re-submits after revoking (marks as APPROVED/completed) ───
+    if (role === "SUPER_ADMIN") {
+      (async () => {
+        try {
+          const notifyUsersRes = await pool.query(
+            `SELECT u.email, u.username
+             FROM users u
+             WHERE u.role = 'REVIEWER'
+               AND u.is_active = true
+               AND u.email IS NOT NULL
+               AND u.email <> ''`
+          );
+
+          if (notifyUsersRes.rows.length === 0) {
+            console.log(`[SUPER-SUBMIT-NOTIFY] No active reviewers found to notify`);
+            return;
+          }
+
+          const validRecipients = notifyUsersRes.rows.filter(u => isValidEmail(u.email));
+          if (validRecipients.length === 0) {
+            console.log(`[SUPER-SUBMIT-NOTIFY] No valid reviewer email addresses found`);
+            return;
+          }
+
+          // Resolve indent_number from dashboard_records if not in request
+          let resolvedIndentNumber = indentNumber;
+          if (!resolvedIndentNumber) {
+            const indentRes = await pool.query(
+              `SELECT indent_number FROM dashboard_records
+               WHERE rake_serial_number = $1
+               AND indent_number IS NOT NULL
+               AND indent_number <> ''
+               ORDER BY indent_number
+               LIMIT 1`,
+              [rakeSerialNumber]
+            );
+            resolvedIndentNumber = indentRes.rows[0]?.indent_number || null;
+          }
+
+          const recipientEmails = validRecipients.map(u => u.email);
+          const submittedByLabel = username || "Super Admin";
+          const subject = `Task Marked as Completed – Rake ${rakeSerialNumber}`;
+
+          const html = `
+            <div style="font-family:Arial,sans-serif;max-width:700px;">
+              <h2 style="color:#27ae60;">✅ Task Marked as Completed by Super Admin</h2>
+              <p>Super Admin <strong>${submittedByLabel}</strong> has submitted and marked a rake entry as <strong>Completed (Approved)</strong>.</p>
+              <table style="border-collapse:collapse;width:100%;margin:16px 0;">
+                <thead>
+                  <tr style="background:#0B3A6E;color:#fff;">
+                    <th style="padding:8px 12px;text-align:left;">Rake Serial</th>
+                    <th style="padding:8px 12px;text-align:left;">Indent</th>
+                    <th style="padding:8px 12px;text-align:left;">Submitted By</th>
+                    <th style="padding:8px 12px;text-align:left;">Completed At</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${rakeSerialNumber}</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${resolvedIndentNumber || "-"}</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${submittedByLabel} (Super Admin)</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${new Date().toLocaleString()}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p style="color:#555;font-size:13px;">
+                This entry has been marked as <strong>Approved / Completed</strong> by Super Admin.<br/>
+                No further action is required from your side for this entry.
+              </p>
+            </div>
+          `;
+
+          await sendAlertEmail(recipientEmails, subject, html);
+          console.log(`[SUPER-SUBMIT-NOTIFY] Completion email sent to ${recipientEmails.join(", ")} for rake ${rakeSerialNumber} by Super Admin ${submittedByLabel}`);
+        } catch (emailErr) {
+          console.error(`[SUPER-SUBMIT-NOTIFY] Failed to send super admin completion email for rake ${rakeSerialNumber}:`, emailErr.message);
+        }
+      })();
+    }
+
+    // ─── Notify reviewers & super admins when ADMIN submits for review ───
+    if (role !== "SUPER_ADMIN") {
+      (async () => {
+        try {
+          // Resolve indent number from dashboard_records if not in request
+          let resolvedIndentNumber = indentNumber;
+          if (!resolvedIndentNumber) {
+            const indentRes = await pool.query(
+              `SELECT indent_number FROM dashboard_records 
+              WHERE rake_serial_number = $1 
+              AND indent_number IS NOT NULL 
+              AND indent_number <> ''
+              ORDER BY indent_number
+              LIMIT 1`,
+              [rakeSerialNumber]
+            );
+            resolvedIndentNumber = indentRes.rows[0]?.indent_number || null;
+          }
+
+          // Fetch all active reviewers and super admins with valid emails
+          const notifyUsersRes = await pool.query(
+            `SELECT u.email, u.username, u.role
+            FROM users u
+            WHERE u.role IN ('REVIEWER', 'SUPER_ADMIN')
+              AND u.is_active = true
+              AND u.email IS NOT NULL
+              AND u.email <> ''`
+          );
+
+          if (notifyUsersRes.rows.length === 0) {
+            console.log(`[SUBMIT-NOTIFY] No active reviewers/super admins found to notify`);
+            return;
+          }
+
+          const validRecipients = notifyUsersRes.rows.filter(u => isValidEmail(u.email));
+          if (validRecipients.length === 0) {
+            console.log(`[SUBMIT-NOTIFY] No valid email addresses found for reviewers/super admins`);
+            return;
+          }
+
+          const recipientEmails = validRecipients.map(u => u.email);
+
+          const subject = `Loading Completed – Review Required – Rake ${rakeSerialNumber}`;
+          const submittedByLabel = username || "Admin";
+
+          const html = `
+            <div style="font-family:Arial,sans-serif;max-width:700px;">
+              <h2 style="color:#0B3A6E;">📋 New Entry Pending Review</h2>
+              <p>A rake entry has been submitted for your review.</p>
+              <table style="border-collapse:collapse;width:100%;margin:16px 0;">
+                <thead>
+                  <tr style="background:#0B3A6E;color:#fff;">
+                    <th style="padding:8px 12px;text-align:left;">Rake Serial</th>
+                    <th style="padding:8px 12px;text-align:left;">Indent</th>
+                    <th style="padding:8px 12px;text-align:left;">Submitted By</th>
+                    <th style="padding:8px 12px;text-align:left;">Submitted At</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${rakeSerialNumber}</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${resolvedIndentNumber || "-"}</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${submittedByLabel}</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${new Date().toLocaleString()}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p style="color:#555;font-size:13px;">
+                Please log in to the system to review and approve or reject this entry.
+              </p>
+            </div>
+          `;
+
+          await sendAlertEmail(recipientEmails, subject, html);
+          console.log(`[SUBMIT-NOTIFY] Review notification sent to ${recipientEmails.join(", ")} for rake ${rakeSerialNumber}, indent: ${resolvedIndentNumber || "none"}`);
+        } catch (emailErr) {
+          console.error(`[SUBMIT-NOTIFY] Failed to send review notification for rake ${rakeSerialNumber}:`, emailErr.message);
+        }
+      })();
+    }
+
+    // ✅ FIX: Ensure wagon times are preserved - verify they exist after submit
+    // The dashboard calculates times from wagon_records, so we need to ensure wagon times are not cleared
+    console.log(`[DISPATCH SUBMIT] Calculated times for ${rakeSerialNumber} (indent: ${indentNumber || 'none'}):`, {
+      rake_loading_start_datetime: calculatedRakeLoadingStart,
+      rake_loading_end_actual: calculatedRakeLoadingEnd,
+      source: "wagon_records" // ✅ FIX: Always from wagon_records, never from request
+    });
+
+    // Add activity timeline entry for submission/approval
+    // ✅ FIX: Use rakeSerialNumber instead of trainId
+    if (username) {
+      await addActivityTimelineEntry(
+        rakeSerialNumber,
+        indentNumber || null,
+        activityType,
+        username,
+        activityNotes
+      );
+    }
+
+    res.json({ message: "Submitted successfully" });
+  } catch (err) {
+    console.error("DISPATCH SUBMIT ERROR:", err);
+    res.status(500).json({ message: "Submit failed" });
+  }
 };
 
 const getActivityTimeline = async (req, res) => {
-const { trainId } = req.params;
+  const { trainId } = req.params;
   const indentNumber = req.query.indent_number || null;
 
   try {
@@ -2736,8 +2978,16 @@ const { trainId } = req.params;
 };
 
 const exportChanges = async (req, res) => {
-const { trainId, activityId } = req.params;
+  const { trainId, activityId } = req.params;
   const decodedTrainId = decodeURIComponent(trainId);
+
+  // Helper to format activity_time for Excel
+  const formatTime = (dt) => {
+    if (!dt) return '';
+    const d = new Date(dt);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  };
 
   try {
     // Get ALL REVIEWER_TRAIN_EDITED and REVIEWER_EDITED activities for this train
@@ -2757,9 +3007,9 @@ const { trainId, activityId } = req.params;
 
     // Prepare Excel data: Single sheet with Page column
     const excelData = [];
-    
-    // Add header row
-    excelData.push(['Page', 'Field Name', 'Previous value', 'Modified value']);
+
+    // Add header row (includes Time column)
+    excelData.push(['Page', 'Field Name', 'Previous value', 'Modified value', 'Time']);
 
     // Track unique rake-level changes to avoid duplicates
     // Key format: "fieldName|oldValue|newValue"
@@ -2769,12 +3019,14 @@ const { trainId, activityId } = req.params;
     // Process all REVIEWER_TRAIN_EDITED and REVIEWER_EDITED activities and combine their changes
     let hasChanges = false;
     for (const activity of activityRes.rows) {
+      const activityTime = formatTime(activity.activity_time);
+
       if (activity.activity_type === 'REVIEWER_EDITED') {
         // REVIEWER_EDITED contains rake/dispatch changes in notes format: "Reviewer made changes: Field: old → new"
         if (activity.notes && activity.notes.startsWith('Reviewer made changes:')) {
           const changesText = activity.notes.replace('Reviewer made changes: ', '');
           const changes = changesText.split('; ').filter(c => c.trim());
-          
+
           changes.forEach(changeStr => {
             // Parse format: "Field: "old" → "new""
             const match = changeStr.match(/^(.+?):\s*"(.+?)"\s*→\s*"(.+?)"$/);
@@ -2784,13 +3036,14 @@ const { trainId, activityId } = req.params;
               const oldVal = oldValue === '(empty)' ? '(empty)' : oldValue;
               const newVal = newValue === '(empty)' ? '(empty)' : newValue;
               const key = `${fieldName}|${oldVal}|${newVal}`;
-              
+
               // Only add if not already present
               if (!uniqueRakeChanges.has(key)) {
                 uniqueRakeChanges.set(key, {
                   field: fieldName,
                   oldValue: oldVal,
-                  newValue: newVal
+                  newValue: newVal,
+                  time: activityTime
                 });
                 hasChanges = true;
               }
@@ -2811,13 +3064,14 @@ const { trainId, activityId } = req.params;
                 const oldVal = change.oldValue || '(empty)';
                 const newVal = change.newValue || '(empty)';
                 const key = `${fieldLabel}|${oldVal}|${newVal}`;
-                
+
                 // Only add if not already present
                 if (!uniqueRakeChanges.has(key)) {
                   uniqueRakeChanges.set(key, {
                     field: fieldLabel,
                     oldValue: oldVal,
-                    newValue: newVal
+                    newValue: newVal,
+                    time: activityTime
                   });
                   hasChanges = true;
                 }
@@ -2832,7 +3086,8 @@ const { trainId, activityId } = req.params;
                 wagonChanges.push({
                   field: `${wagonLabel}: ${fieldLabel}`,
                   oldValue: change.oldValue || '(empty)',
-                  newValue: change.newValue || '(empty)'
+                  newValue: change.newValue || '(empty)',
+                  time: activityTime
                 });
                 hasChanges = true;
               });
@@ -2851,7 +3106,8 @@ const { trainId, activityId } = req.params;
         'Rake',
         change.field,
         change.oldValue,
-        change.newValue
+        change.newValue,
+        change.time
       ]);
     });
 
@@ -2861,7 +3117,8 @@ const { trainId, activityId } = req.params;
         'Wagon',
         change.field,
         change.oldValue,
-        change.newValue
+        change.newValue,
+        change.time
       ]);
     });
 
@@ -2880,7 +3137,8 @@ const { trainId, activityId } = req.params;
       { wch: 15 }, // Page
       { wch: 45 }, // Field Name
       { wch: 30 }, // Previous value
-      { wch: 30 }  // Modified value
+      { wch: 30 }, // Modified value
+      { wch: 22 }  // Time
     ];
 
     // Generate filename with rake_serial_number
@@ -2905,6 +3163,14 @@ const exportAllReviewerChanges = async (req, res) => {
   const { trainId } = req.params;
   const decodedTrainId = decodeURIComponent(trainId);
 
+  // Helper to format activity_time for Excel
+  const formatTime = (dt) => {
+    if (!dt) return '';
+    const d = new Date(dt);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  };
+
   try {
     // Get ALL REVIEWER_TRAIN_EDITED and REVIEWER_EDITED activities for this train
     // This combines all reviewer edits (wagon details + rake details) into a single Excel sheet with Page column
@@ -2923,9 +3189,9 @@ const exportAllReviewerChanges = async (req, res) => {
 
     // Prepare Excel data: Single sheet with Page column
     const excelData = [];
-    
-    // Add header row
-    excelData.push(['Page', 'Field Name', 'Previous value', 'Modified value']);
+
+    // Add header row (includes Time column)
+    excelData.push(['Page', 'Field Name', 'Previous value', 'Modified value', 'Time']);
 
     // Track unique rake-level changes to avoid duplicates
     // Key format: "fieldName|oldValue|newValue"
@@ -2935,12 +3201,14 @@ const exportAllReviewerChanges = async (req, res) => {
     // Process all REVIEWER_TRAIN_EDITED and REVIEWER_EDITED activities and combine their changes
     let hasChanges = false;
     for (const activity of activityRes.rows) {
+      const activityTime = formatTime(activity.activity_time);
+
       if (activity.activity_type === 'REVIEWER_EDITED') {
         // REVIEWER_EDITED contains rake/dispatch changes in notes format: "Reviewer made changes: Field: old → new"
         if (activity.notes && activity.notes.startsWith('Reviewer made changes:')) {
           const changesText = activity.notes.replace('Reviewer made changes: ', '');
           const changes = changesText.split('; ').filter(c => c.trim());
-          
+
           changes.forEach(changeStr => {
             // Parse format: "Field: "old" → "new""
             const match = changeStr.match(/^(.+?):\s*"(.+?)"\s*→\s*"(.+?)"$/);
@@ -2950,13 +3218,14 @@ const exportAllReviewerChanges = async (req, res) => {
               const oldVal = oldValue === '(empty)' ? '(empty)' : oldValue;
               const newVal = newValue === '(empty)' ? '(empty)' : newValue;
               const key = `${fieldName}|${oldVal}|${newVal}`;
-              
+
               // Only add if not already present
               if (!uniqueRakeChanges.has(key)) {
                 uniqueRakeChanges.set(key, {
                   field: fieldName,
                   oldValue: oldVal,
-                  newValue: newVal
+                  newValue: newVal,
+                  time: activityTime
                 });
                 hasChanges = true;
               }
@@ -2977,13 +3246,14 @@ const exportAllReviewerChanges = async (req, res) => {
                 const oldVal = change.oldValue || '(empty)';
                 const newVal = change.newValue || '(empty)';
                 const key = `${fieldLabel}|${oldVal}|${newVal}`;
-                
+
                 // Only add if not already present
                 if (!uniqueRakeChanges.has(key)) {
                   uniqueRakeChanges.set(key, {
                     field: fieldLabel,
                     oldValue: oldVal,
-                    newValue: newVal
+                    newValue: newVal,
+                    time: activityTime
                   });
                   hasChanges = true;
                 }
@@ -2998,7 +3268,8 @@ const exportAllReviewerChanges = async (req, res) => {
                 wagonChanges.push({
                   field: `${wagonLabel}: ${fieldLabel}`,
                   oldValue: change.oldValue || '(empty)',
-                  newValue: change.newValue || '(empty)'
+                  newValue: change.newValue || '(empty)',
+                  time: activityTime
                 });
                 hasChanges = true;
               });
@@ -3017,7 +3288,8 @@ const exportAllReviewerChanges = async (req, res) => {
         'Rake',
         change.field,
         change.oldValue,
-        change.newValue
+        change.newValue,
+        change.time
       ]);
     });
 
@@ -3027,7 +3299,8 @@ const exportAllReviewerChanges = async (req, res) => {
         'Wagon',
         change.field,
         change.oldValue,
-        change.newValue
+        change.newValue,
+        change.time
       ]);
     });
 
@@ -3046,7 +3319,8 @@ const exportAllReviewerChanges = async (req, res) => {
       { wch: 15 }, // Page
       { wch: 45 }, // Field Name
       { wch: 30 }, // Previous value
-      { wch: 30 }  // Modified value
+      { wch: 30 }, // Modified value
+      { wch: 22 }  // Time
     ];
 
     // Generate filename with rake_serial_number
@@ -3068,135 +3342,298 @@ const exportAllReviewerChanges = async (req, res) => {
 };
 
 const revokeTrain = async (req, res) => {
-const { trainId } = req.params;
-    const { indent_number, username } = req.body;
-    const role = req.headers["x-user-role"];
+  const { trainId } = req.params;
+  const { indent_number, username } = req.body;
+  const role = req.headers["x-user-role"];
 
-    try {
-      // Check if train exists and is APPROVED
-      let checkQuery, checkParams;
-      if (indent_number) {
-        checkQuery = `
+  try {
+    // Check if train exists and is APPROVED
+    let checkQuery, checkParams;
+    if (indent_number) {
+      checkQuery = `
           SELECT status, assigned_reviewer 
           FROM dashboard_records 
           WHERE rake_serial_number = $1 AND indent_number = $2
         `;
-        checkParams = [trainId, indent_number];
-      } else {
-        checkQuery = `
+      checkParams = [trainId, indent_number];
+    } else {
+      checkQuery = `
           SELECT status, assigned_reviewer 
           FROM dashboard_records 
           WHERE rake_serial_number = $1
         `;
-        checkParams = [trainId];
-      }
-
-      const checkRes = await pool.query(checkQuery, checkParams);
-
-      if (checkRes.rows.length === 0) {
-        return res.status(404).json({ message: "Train not found" });
-      }
-
-      const row = checkRes.rows[0];
-      const status = row.status;
-      const assignedReviewer = row.assigned_reviewer;
-
-      if (role === "SUPER_ADMIN") {
-        // SUPER_ADMIN can revoke only APPROVED trains
-        if (status !== "APPROVED") {
-          return res.status(400).json({
-            message: "Only APPROVED trains can be revoked by SUPER_ADMIN",
-          });
-        }
-      } else if (role === "ADMIN") {
-        // ADMIN can revoke only PENDING_APPROVAL submissions that are not yet assigned
-        if (status !== "PENDING_APPROVAL") {
-          return res.status(400).json({
-            message: "Only PENDING_APPROVAL submissions can be revoked by ADMIN",
-          });
-        }
-
-        if (assignedReviewer && assignedReviewer !== "") {
-          return res.status(400).json({
-            message:
-              "This task has already been assigned to a reviewer and can no longer be revoked",
-          });
-        }
-      } else {
-        // Should be unreachable because of allowRoles, but keep as safety
-        return res.status(403).json({ message: "Not allowed to revoke" });
-      }
-
-      // Update status to LOADING_IN_PROGRESS
-      // For SUPER_ADMIN: also clear assigned_reviewer so reviewer no longer has edit access
-      // For ADMIN: keep assigned_reviewer intact (ADMIN can only revoke before assignment anyway)
-      let updateQuery, updateParams;
-      if (indent_number) {
-        if (role === "SUPER_ADMIN") {
-          updateQuery = `
-            UPDATE dashboard_records 
-            SET status = 'LOADING_IN_PROGRESS',
-                assigned_reviewer = NULL
-            WHERE rake_serial_number = $1 AND indent_number = $2
-          `;
-          updateParams = [trainId, indent_number];
-        } else {
-          updateQuery = `
-            UPDATE dashboard_records 
-            SET status = 'LOADING_IN_PROGRESS'
-            WHERE rake_serial_number = $1 AND indent_number = $2
-          `;
-          updateParams = [trainId, indent_number];
-        }
-      } else {
-        if (role === "SUPER_ADMIN") {
-          updateQuery = `
-            UPDATE dashboard_records 
-            SET status = 'LOADING_IN_PROGRESS',
-                assigned_reviewer = NULL
-            WHERE rake_serial_number = $1
-          `;
-          updateParams = [trainId];
-        } else {
-          updateQuery = `
-            UPDATE dashboard_records 
-            SET status = 'LOADING_IN_PROGRESS'
-            WHERE rake_serial_number = $1
-          `;
-          updateParams = [trainId];
-        }
-      }
-
-      await pool.query(updateQuery, updateParams);
-
-      // Add activity timeline entry for revocation
-      const revokeUsername = username || req.headers["x-username"] || "System";
-      const revokeRole = role === "SUPER_ADMIN" ? "SUPER_ADMIN" : "ADMIN";
-      const activityType = role === "SUPER_ADMIN" ? "REVOKED_BY_SUPER_ADMIN" : "REVOKED";
-      const notes = role === "SUPER_ADMIN"
-        ? `Status revoked from ${status} to LOADING_IN_PROGRESS by SUPER_ADMIN`
-        : `Status revoked from ${status} to LOADING_IN_PROGRESS`;
-
-      await addActivityTimelineEntry(
-        trainId,
-        indent_number || null,
-        activityType,
-        revokeUsername,
-        notes
-      );
-
-      res.json({
-        message: "Train status revoked successfully.",
-        newStatus: "LOADING_IN_PROGRESS"
-      });
-    } catch (err) {
-      console.error("REVOKE TRAIN ERROR:", err);
-      res.status(500).json({ message: "Failed to revoke train status" });
+      checkParams = [trainId];
     }
+
+    const checkRes = await pool.query(checkQuery, checkParams);
+
+    if (checkRes.rows.length === 0) {
+      return res.status(404).json({ message: "Train not found" });
+    }
+
+    const row = checkRes.rows[0];
+    const status = row.status;
+    const assignedReviewer = row.assigned_reviewer;
+
+    if (role === "SUPER_ADMIN") {
+      // SUPER_ADMIN can revoke only APPROVED trains
+      if (status !== "APPROVED") {
+        return res.status(400).json({
+          message: "Only APPROVED trains can be revoked by SUPER_ADMIN",
+        });
+      }
+    } else if (role === "ADMIN") {
+      // ADMIN can revoke only PENDING_APPROVAL submissions that are not yet assigned
+      if (status !== "PENDING_APPROVAL") {
+        return res.status(400).json({
+          message: "Only PENDING_APPROVAL submissions can be revoked by ADMIN",
+        });
+      }
+
+      if (assignedReviewer && assignedReviewer !== "") {
+        return res.status(400).json({
+          message:
+            "This task has already been assigned to a reviewer and can no longer be revoked",
+        });
+      }
+    } else {
+      // Should be unreachable because of allowRoles, but keep as safety
+      return res.status(403).json({ message: "Not allowed to revoke" });
+    }
+
+    // Update status to LOADING_IN_PROGRESS
+    // For SUPER_ADMIN: also clear assigned_reviewer so reviewer no longer has edit access
+    // For ADMIN: keep assigned_reviewer intact (ADMIN can only revoke before assignment anyway)
+    let updateQuery, updateParams;
+    if (indent_number) {
+      if (role === "SUPER_ADMIN") {
+        updateQuery = `
+            UPDATE dashboard_records 
+            SET status = 'LOADING_IN_PROGRESS',
+                assigned_reviewer = NULL
+            WHERE rake_serial_number = $1 AND indent_number = $2
+          `;
+        updateParams = [trainId, indent_number];
+      } else {
+        updateQuery = `
+            UPDATE dashboard_records 
+            SET status = 'LOADING_IN_PROGRESS'
+            WHERE rake_serial_number = $1 AND indent_number = $2
+          `;
+        updateParams = [trainId, indent_number];
+      }
+    } else {
+      if (role === "SUPER_ADMIN") {
+        updateQuery = `
+            UPDATE dashboard_records 
+            SET status = 'LOADING_IN_PROGRESS',
+                assigned_reviewer = NULL
+            WHERE rake_serial_number = $1
+          `;
+        updateParams = [trainId];
+      } else {
+        updateQuery = `
+            UPDATE dashboard_records 
+            SET status = 'LOADING_IN_PROGRESS'
+            WHERE rake_serial_number = $1
+          `;
+        updateParams = [trainId];
+      }
+    }
+
+    await pool.query(updateQuery, updateParams);
+
+    // ─── Notify reviewers when SUPER_ADMIN revokes a completed (APPROVED) task ───
+    if (role === "SUPER_ADMIN") {
+      (async () => {
+        try {
+          const notifyUsersRes = await pool.query(
+            `SELECT u.email, u.username
+             FROM users u
+             WHERE u.role = 'REVIEWER'
+               AND u.is_active = true
+               AND u.email IS NOT NULL
+               AND u.email <> ''`
+          );
+
+          if (notifyUsersRes.rows.length === 0) {
+            console.log(`[SUPER-REVOKE-NOTIFY] No active reviewers found to notify`);
+            return;
+          }
+
+          const validRecipients = notifyUsersRes.rows.filter(u => isValidEmail(u.email));
+          if (validRecipients.length === 0) {
+            console.log(`[SUPER-REVOKE-NOTIFY] No valid reviewer email addresses found`);
+            return;
+          }
+
+          // Resolve indent_number from dashboard_records if not in request
+          let resolvedIndentNumber = indent_number || null;
+          if (!resolvedIndentNumber) {
+            const indentRes = await pool.query(
+              `SELECT indent_number FROM dashboard_records
+               WHERE rake_serial_number = $1
+               AND indent_number IS NOT NULL
+               AND indent_number <> ''
+               ORDER BY indent_number
+               LIMIT 1`,
+              [trainId]
+            );
+            resolvedIndentNumber = indentRes.rows[0]?.indent_number || null;
+          }
+
+          const recipientEmails = validRecipients.map(u => u.email);
+          const revokedByLabel = username || "Super Admin";
+          const subject = `Approved Task Revoked – Rake ${trainId}`;
+
+          const html = `
+            <div style="font-family:Arial,sans-serif;max-width:700px;">
+              <h2 style="color:#c0392b;">⚠️ Approved Task Revoked by Super Admin</h2>
+              <p>A previously approved rake entry has been revoked by Super Admin <strong>${revokedByLabel}</strong> and moved back to Loading In Progress.</p>
+              <table style="border-collapse:collapse;width:100%;margin:16px 0;">
+                <thead>
+                  <tr style="background:#0B3A6E;color:#fff;">
+                    <th style="padding:8px 12px;text-align:left;">Rake Serial</th>
+                    <th style="padding:8px 12px;text-align:left;">Indent</th>
+                    <th style="padding:8px 12px;text-align:left;">Revoked By</th>
+                    <th style="padding:8px 12px;text-align:left;">Revoked At</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${trainId}</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${resolvedIndentNumber || "-"}</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${revokedByLabel} (Super Admin)</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${new Date().toLocaleString()}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p style="color:#555;font-size:13px;">
+                This entry has been moved back to <strong>Loading In Progress</strong> status by Super Admin.<br/>
+                Your reviewer assignment for this task has been cleared. No further action is required from your side unless reassigned.
+              </p>
+            </div>
+          `;
+
+          await sendAlertEmail(recipientEmails, subject, html);
+          console.log(`[SUPER-REVOKE-NOTIFY] Revocation email sent to ${recipientEmails.join(", ")} for rake ${trainId} by Super Admin ${revokedByLabel}`);
+        } catch (emailErr) {
+          console.error(`[SUPER-REVOKE-NOTIFY] Failed to send super admin revocation email for rake ${trainId}:`, emailErr.message);
+        }
+      })();
+    }
+
+    // ─── Notify reviewer if ADMIN revokes a PENDING_APPROVAL submission ───
+    if (role === "ADMIN") {
+      (async () => {
+        try {
+          // Only notify if there was an assigned reviewer
+          // Also notify all active reviewers + super admins so no one is left out
+          const notifyUsersRes = await pool.query(
+            `SELECT u.email, u.username, u.role
+             FROM users u
+             WHERE u.role IN ('REVIEWER')
+               AND u.is_active = true
+               AND u.email IS NOT NULL
+               AND u.email <> ''`
+          );
+
+          if (notifyUsersRes.rows.length === 0) {
+            console.log(`[REVOKE-NOTIFY] No active reviewers/super admins found to notify`);
+            return;
+          }
+
+          const validRecipients = notifyUsersRes.rows.filter(u => isValidEmail(u.email));
+          if (validRecipients.length === 0) {
+            console.log(`[REVOKE-NOTIFY] No valid email addresses found`);
+            return;
+          }
+
+          const recipientEmails = validRecipients.map(u => u.email);
+          const revokedByLabel = username || "Admin";
+          const indentLabel = indent_number || null;
+
+          // Resolve indent_number from dashboard_records if not in request
+          let resolvedIndentNumber = indentLabel;
+          if (!resolvedIndentNumber) {
+            const indentRes = await pool.query(
+              `SELECT indent_number FROM dashboard_records
+               WHERE rake_serial_number = $1
+               AND indent_number IS NOT NULL
+               AND indent_number <> ''
+               ORDER BY indent_number
+               LIMIT 1`,
+              [trainId]
+            );
+            resolvedIndentNumber = indentRes.rows[0]?.indent_number || null;
+          }
+
+          const subject = `Submission Revoked – Rake ${trainId}`;
+          const html = `
+            <div style="font-family:Arial,sans-serif;max-width:700px;">
+              <h2 style="color:#c0392b;">↩️ Submission Revoked</h2>
+              <p>A rake submission that was pending your review has been revoked by an admin.</p>
+              <table style="border-collapse:collapse;width:100%;margin:16px 0;">
+                <thead>
+                  <tr style="background:#0B3A6E;color:#fff;">
+                    <th style="padding:8px 12px;text-align:left;">Rake Serial</th>
+                    <th style="padding:8px 12px;text-align:left;">Indent</th>
+                    <th style="padding:8px 12px;text-align:left;">Revoked By</th>
+                    <th style="padding:8px 12px;text-align:left;">Revoked At</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${trainId}</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${resolvedIndentNumber || "-"}</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${revokedByLabel}</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${new Date().toLocaleString()}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p style="color:#555;font-size:13px;">
+                This entry has been moved back to <strong>Loading In Progress</strong> status. 
+                No further action is required from your side for this entry.
+              </p>
+            </div>
+          `;
+
+          await sendAlertEmail(recipientEmails, subject, html);
+          console.log(`[REVOKE-NOTIFY] Revocation email sent to ${recipientEmails.join(", ")} for rake ${trainId} by ${revokedByLabel}`);
+        } catch (emailErr) {
+          console.error(`[REVOKE-NOTIFY] Failed to send revocation email for rake ${trainId}:`, emailErr.message);
+        }
+      })();
+    }
+
+    // Add activity timeline entry for revocation
+    const revokeUsername = username || req.headers["x-username"] || "System";
+    const revokeRole = role === "SUPER_ADMIN" ? "SUPER_ADMIN" : "ADMIN";
+    const activityType = role === "SUPER_ADMIN" ? "REVOKED_BY_SUPER_ADMIN" : "REVOKED";
+    const notes = role === "SUPER_ADMIN"
+      ? `Status revoked from ${status} to LOADING_IN_PROGRESS by SUPER_ADMIN`
+      : `Status revoked from ${status} to LOADING_IN_PROGRESS`;
+
+    await addActivityTimelineEntry(
+      trainId,
+      indent_number || null,
+      activityType,
+      revokeUsername,
+      notes
+    );
+
+    res.json({
+      message: "Train status revoked successfully.",
+      newStatus: "LOADING_IN_PROGRESS"
+    });
+  } catch (err) {
+    console.error("REVOKE TRAIN ERROR:", err);
+    res.status(500).json({ message: "Failed to revoke train status" });
+  }
 };
 
 const checkSequentialAssignments = async (req, res) => {
-try {
+  try {
     const { since_seconds = 30 } = req.query; // Default: check last 30 seconds
 
     // Query train_session for trains with sequential pattern (e.g., 2024-25/01/001-1) 
@@ -3292,7 +3729,7 @@ const addActivityTimelineEntry = async (trainId, indentNumber, activityType, use
 
     // ✅ FIX: Use rakeSerialNumber if resolved, otherwise use trainId (which is already a rake_serial_number)
     const finalRakeSerialNumber = rakeSerialNumber || trainId;
-    
+
     await pool.query(
       `
       INSERT INTO activity_timeline (indent_number, activity_type, username, activity_time, notes, rake_serial_number)
@@ -3309,189 +3746,189 @@ const addActivityTimelineEntry = async (trainId, indentNumber, activityType, use
 
 
 const checkMultipleSerials = async (req, res) => {
-const { trainId } = req.params;
+  const { trainId } = req.params;
 
-    try {
-      // Check if any train_session or dashboard_records exist with pattern trainId-N
-      const sequentialSerials = await pool.query(
-        `
+  try {
+    // Check if any train_session or dashboard_records exist with pattern trainId-N
+    const sequentialSerials = await pool.query(
+      `
         SELECT rake_serial_number AS train_id FROM train_session 
         WHERE rake_serial_number LIKE $1 AND rake_serial_number != $2
         LIMIT 1
         `,
-        [`${trainId}-%`, trainId]
-      );
+      [`${trainId}-%`, trainId]
+    );
 
-      const hasSequentialSerials = sequentialSerials.rows.length > 0;
+    const hasSequentialSerials = sequentialSerials.rows.length > 0;
 
-      res.json({
-        hasSequentialSerials,
-        message: hasSequentialSerials
-          ? "Sequential serial numbers already exist"
-          : "No sequential serial numbers found",
-      });
-    } catch (err) {
-      console.error("CHECK MULTIPLE SERIALS ERROR:", err);
-      res.status(500).json({
-        message: "Failed to check serial numbers",
-        hasSequentialSerials: false,
-      });
-    }
+    res.json({
+      hasSequentialSerials,
+      message: hasSequentialSerials
+        ? "Sequential serial numbers already exist"
+        : "No sequential serial numbers found",
+    });
+  } catch (err) {
+    console.error("CHECK MULTIPLE SERIALS ERROR:", err);
+    res.status(500).json({
+      message: "Failed to check serial numbers",
+      hasSequentialSerials: false,
+    });
+  }
 };
 
 const generateMultipleRakeSerial = async (req, res) => {
-const { trainId } = req.params;
-    // trainId may be URL encoded (e.g., "2025-26%2F01%2F001"), decode it
-    const decodedTrainId = decodeURIComponent(trainId);
-    const { indentNumbers: indentNumbersFromBody } = req.body;
+  const { trainId } = req.params;
+  // trainId may be URL encoded (e.g., "2025-26%2F01%2F001"), decode it
+  const decodedTrainId = decodeURIComponent(trainId);
+  const { indentNumbers: indentNumbersFromBody } = req.body;
 
-    try {
-      // Get original train data - check both train_id and rake_serial_number
-      const originalTrain = await pool.query(
-        "SELECT * FROM train_session WHERE rake_serial_number = $1",
-        [decodedTrainId]
-      );
+  try {
+    // Get original train data - check both train_id and rake_serial_number
+    const originalTrain = await pool.query(
+      "SELECT * FROM train_session WHERE rake_serial_number = $1",
+      [decodedTrainId]
+    );
 
-      if (originalTrain.rows.length === 0) {
-        return res.status(404).json({ message: "Original train not found" });
-      }
+    if (originalTrain.rows.length === 0) {
+      return res.status(404).json({ message: "Original train not found" });
+    }
 
-      const originalData = originalTrain.rows[0];
-      const rakeSerialNumber = originalData.rake_serial_number; // ✅ FIX: Use rake_serial_number from train_session
-      const siding = originalData.siding;
+    const originalData = originalTrain.rows[0];
+    const rakeSerialNumber = originalData.rake_serial_number; // ✅ FIX: Use rake_serial_number from train_session
+    const siding = originalData.siding;
 
-      // Get existing dashboard_records to get all indent numbers
-      // ✅ FIX: Use rake_serial_number only
-      const existingDashboardRecords = await pool.query(
-        "SELECT * FROM dashboard_records WHERE rake_serial_number = $1 OR rake_serial_number LIKE $2",
-        [decodedTrainId, `${rakeSerialNumber}-%`]
-      );
+    // Get existing dashboard_records to get all indent numbers
+    // ✅ FIX: Use rake_serial_number only
+    const existingDashboardRecords = await pool.query(
+      "SELECT * FROM dashboard_records WHERE rake_serial_number = $1 OR rake_serial_number LIKE $2",
+      [decodedTrainId, `${rakeSerialNumber}-%`]
+    );
 
-      if (existingDashboardRecords.rows.length === 0) {
-        return res.status(404).json({ message: "No dashboard records found for this train" });
-      }
+    if (existingDashboardRecords.rows.length === 0) {
+      return res.status(404).json({ message: "No dashboard records found for this train" });
+    }
 
-      // ✅ FIX: Check if serial numbers have already been generated using rake_serial_number
-      const hasSequentialSerials = existingDashboardRecords.rows.some(
-        r => r.rake_serial_number && r.rake_serial_number.includes(`${rakeSerialNumber}-`) && r.rake_serial_number !== rakeSerialNumber
-      );
+    // ✅ FIX: Check if serial numbers have already been generated using rake_serial_number
+    const hasSequentialSerials = existingDashboardRecords.rows.some(
+      r => r.rake_serial_number && r.rake_serial_number.includes(`${rakeSerialNumber}-`) && r.rake_serial_number !== rakeSerialNumber
+    );
 
-      if (hasSequentialSerials) {
-        return res.status(400).json({
-          message: "Multiple rake serial numbers have already been generated for this train"
-        });
-      }
+    if (hasSequentialSerials) {
+      return res.status(400).json({
+        message: "Multiple rake serial numbers have already been generated for this train"
+      });
+    }
 
-      // ✅ FIX: Filter to only records with the original rake_serial_number
-      const originalRecords = existingDashboardRecords.rows.filter(r =>
-        r.rake_serial_number === rakeSerialNumber || r.rake_serial_number === decodedTrainId
-      );
+    // ✅ FIX: Filter to only records with the original rake_serial_number
+    const originalRecords = existingDashboardRecords.rows.filter(r =>
+      r.rake_serial_number === rakeSerialNumber || r.rake_serial_number === decodedTrainId
+    );
 
-      if (originalRecords.length === 0) {
-        return res.status(404).json({ message: "No dashboard records found with original rake_serial_number" });
-      }
+    if (originalRecords.length === 0) {
+      return res.status(404).json({ message: "No dashboard records found with original rake_serial_number" });
+    }
 
-      // Get distinct indent numbers - prefer from request body if provided, otherwise from database records
-      let indentNumbers = [];
-      if (indentNumbersFromBody && Array.isArray(indentNumbersFromBody) && indentNumbersFromBody.length > 0) {
-        // Use indent numbers from request body (from frontend)
-        indentNumbers = indentNumbersFromBody
-          .filter(Boolean)
-          .filter((v, i, a) => a.indexOf(v) === i); // unique
-      } else {
-        // Fallback to getting indent numbers from database records
-        indentNumbers = originalRecords
-          .map(r => r.indent_number)
-          .filter(Boolean)
-          .filter((v, i, a) => a.indexOf(v) === i); // unique
-      }
+    // Get distinct indent numbers - prefer from request body if provided, otherwise from database records
+    let indentNumbers = [];
+    if (indentNumbersFromBody && Array.isArray(indentNumbersFromBody) && indentNumbersFromBody.length > 0) {
+      // Use indent numbers from request body (from frontend)
+      indentNumbers = indentNumbersFromBody
+        .filter(Boolean)
+        .filter((v, i, a) => a.indexOf(v) === i); // unique
+    } else {
+      // Fallback to getting indent numbers from database records
+      indentNumbers = originalRecords
+        .map(r => r.indent_number)
+        .filter(Boolean)
+        .filter((v, i, a) => a.indexOf(v) === i); // unique
+    }
 
-      if (indentNumbers.length === 0) {
-        return res.status(400).json({ message: "No indent numbers found. Please provide indent numbers in the request body or ensure they exist in dashboard records." });
-      }
+    if (indentNumbers.length === 0) {
+      return res.status(400).json({ message: "No indent numbers found. Please provide indent numbers in the request body or ensure they exist in dashboard records." });
+    }
 
-      // ✅ Check which indent number has bag count started (loaded_bag_count > 0)
-      // Only consider the indent numbers we are actually splitting, and make the
-      // selection deterministic by ordering by indent_number
-      const indentBagCounts = await pool.query(
-        `SELECT indent_number, SUM(loaded_bag_count) as total_bags
+    // ✅ Check which indent number has bag count started (loaded_bag_count > 0)
+    // Only consider the indent numbers we are actually splitting, and make the
+    // selection deterministic by ordering by indent_number
+    const indentBagCounts = await pool.query(
+      `SELECT indent_number, SUM(loaded_bag_count) as total_bags
          FROM wagon_records
          WHERE (rake_serial_number = $1 OR rake_serial_number = $2)
            AND indent_number = ANY($3)
          GROUP BY indent_number
          HAVING SUM(loaded_bag_count) > 0
          ORDER BY indent_number`,
-        [rakeSerialNumber, decodedTrainId, indentNumbers]
-      );
+      [rakeSerialNumber, decodedTrainId, indentNumbers]
+    );
 
-      // Find the indent number that has bag count started.
-      // If multiple indents have started counting, choose the smallest
-      // indent_number so behaviour is predictable.
-      const indentWithBagCount = indentBagCounts.rows.length > 0 
-        ? indentBagCounts.rows[0].indent_number 
-        : null;
+    // Find the indent number that has bag count started.
+    // If multiple indents have started counting, choose the smallest
+    // indent_number so behaviour is predictable.
+    const indentWithBagCount = indentBagCounts.rows.length > 0
+      ? indentBagCounts.rows[0].indent_number
+      : null;
 
-      console.log(`[GENERATE MULTIPLE RAKE SERIAL] Indent with bag count started: ${indentWithBagCount}`);
+    console.log(`[GENERATE MULTIPLE RAKE SERIAL] Indent with bag count started: ${indentWithBagCount}`);
 
-      // ✅ Sort indent numbers in ascending order
-      const sortedIndentNumbers = [...indentNumbers].sort();
+    // ✅ Sort indent numbers in ascending order
+    const sortedIndentNumbers = [...indentNumbers].sort();
 
-      // ✅ Assign existing rake serial number to indent with bag count started
-      // Then assign sequential numbers to others in ascending order
-      const updatedTrainIds = {};
-      let currentRakeSerial = rakeSerialNumber; // Start with the original rake serial number
-      let assignedOriginal = false; // Track if we've assigned the original rake serial number
+    // ✅ Assign existing rake serial number to indent with bag count started
+    // Then assign sequential numbers to others in ascending order
+    const updatedTrainIds = {};
+    let currentRakeSerial = rakeSerialNumber; // Start with the original rake serial number
+    let assignedOriginal = false; // Track if we've assigned the original rake serial number
 
-      // ✅ FIX: Get all existing data from parent records BEFORE splitting
-      // This ensures we can copy all user input and backend entries to child records
-      const parentDashboardRecords = await pool.query(
-        `SELECT * FROM dashboard_records 
+    // ✅ FIX: Get all existing data from parent records BEFORE splitting
+    // This ensures we can copy all user input and backend entries to child records
+    const parentDashboardRecords = await pool.query(
+      `SELECT * FROM dashboard_records 
          WHERE rake_serial_number = $1 
          ORDER BY 
            CASE WHEN indent_number IS NULL OR indent_number = '' THEN 0 ELSE 1 END,
            indent_number`,
-        [rakeSerialNumber]
-      );
+      [rakeSerialNumber]
+    );
 
-      const parentDispatchRecords = await pool.query(
-        `SELECT * FROM dispatch_records 
+    const parentDispatchRecords = await pool.query(
+      `SELECT * FROM dispatch_records 
          WHERE rake_serial_number = $1 
          ORDER BY 
            CASE WHEN indent_number IS NULL OR indent_number = '' THEN 0 ELSE 1 END,
            indent_number`,
-        [rakeSerialNumber]
-      );
+      [rakeSerialNumber]
+    );
 
-      // ✅ FIX: Get parent dashboard record (with null/empty indent_number)
-      // During Save, we create only ONE parent record with null indent_number
-      // During splitting, we need to find this parent record
-      const parentDashboard = parentDashboardRecords.rows.find(r => 
-        !r.indent_number || r.indent_number === ''
-      ) || parentDashboardRecords.rows[0];
+    // ✅ FIX: Get parent dashboard record (with null/empty indent_number)
+    // During Save, we create only ONE parent record with null indent_number
+    // During splitting, we need to find this parent record
+    const parentDashboard = parentDashboardRecords.rows.find(r =>
+      !r.indent_number || r.indent_number === ''
+    ) || parentDashboardRecords.rows[0];
 
-      // ✅ FIX: Get parent dispatch record (with null/empty indent_number or first record)
-      const parentDispatch = parentDispatchRecords.rows.find(r => 
-        !r.indent_number || r.indent_number === ''
-      ) || parentDispatchRecords.rows[0];
+    // ✅ FIX: Get parent dispatch record (with null/empty indent_number or first record)
+    const parentDispatch = parentDispatchRecords.rows.find(r =>
+      !r.indent_number || r.indent_number === ''
+    ) || parentDispatchRecords.rows[0];
 
-      // ✅ CRITICAL FIX: If no parent dashboard record exists, create one from wagon data
-      // This handles the case where Save created a parent record but it was deleted or not found
-      if (!parentDashboard) {
-        console.log(`[GENERATE MULTIPLE RAKE SERIAL] No parent dashboard record found, creating one from wagon data`);
-        // Get first wagon data to populate parent record
-        const firstWagon = await pool.query(
-          `SELECT indent_number, customer_id, commodity, wagon_destination 
+    // ✅ CRITICAL FIX: If no parent dashboard record exists, create one from wagon data
+    // This handles the case where Save created a parent record but it was deleted or not found
+    if (!parentDashboard) {
+      console.log(`[GENERATE MULTIPLE RAKE SERIAL] No parent dashboard record found, creating one from wagon data`);
+      // Get first wagon data to populate parent record
+      const firstWagon = await pool.query(
+        `SELECT indent_number, customer_id, commodity, wagon_destination 
            FROM wagon_records 
            WHERE rake_serial_number = $1 
            ORDER BY tower_number 
            LIMIT 1`,
-          [rakeSerialNumber]
-        );
-        
-        if (firstWagon.rows.length > 0) {
-          const w = firstWagon.rows[0];
-          await pool.query(
-            `
+        [rakeSerialNumber]
+      );
+
+      if (firstWagon.rows.length > 0) {
+        const w = firstWagon.rows[0];
+        await pool.query(
+          `
             INSERT INTO dashboard_records (
               rake_serial_number, indent_number, customer_id, commodity, 
               wagon_destination, status, single_indent, hl_only, siding, 
@@ -3504,48 +3941,48 @@ const { trainId } = req.params;
             WHERE rake_serial_number = $5
             LIMIT 1
             `,
-            [rakeSerialNumber, w.customer_id, w.commodity, w.wagon_destination, rakeSerialNumber]
-          );
-        }
+          [rakeSerialNumber, w.customer_id, w.commodity, w.wagon_destination, rakeSerialNumber]
+        );
+      }
+    }
+
+    // Process indents: first assign original to indent with bag count, then sequential to others
+    for (let i = 0; i < sortedIndentNumbers.length; i++) {
+      const indentNum = sortedIndentNumbers[i];
+      let assignedRakeSerial;
+
+      if (indentNum === indentWithBagCount && !assignedOriginal) {
+        // Indent with bag count started gets the original rake serial number
+        assignedRakeSerial = rakeSerialNumber;
+        assignedOriginal = true;
+        console.log(`[GENERATE MULTIPLE RAKE SERIAL] Assigning original rake serial ${rakeSerialNumber} to indent ${indentNum} (has bag count started)`);
+      } else {
+        // Other indents get sequential numbers
+        assignedRakeSerial = await generateNextUniqueRakeSerialNumber(currentRakeSerial);
+        currentRakeSerial = assignedRakeSerial; // Update for next iteration
+        console.log(`[GENERATE MULTIPLE RAKE SERIAL] Assigning sequential rake serial ${assignedRakeSerial} to indent ${indentNum}`);
       }
 
-      // Process indents: first assign original to indent with bag count, then sequential to others
-      for (let i = 0; i < sortedIndentNumbers.length; i++) {
-        const indentNum = sortedIndentNumbers[i];
-        let assignedRakeSerial;
-
-        if (indentNum === indentWithBagCount && !assignedOriginal) {
-          // Indent with bag count started gets the original rake serial number
-          assignedRakeSerial = rakeSerialNumber;
-          assignedOriginal = true;
-          console.log(`[GENERATE MULTIPLE RAKE SERIAL] Assigning original rake serial ${rakeSerialNumber} to indent ${indentNum} (has bag count started)`);
-        } else {
-          // Other indents get sequential numbers
-          assignedRakeSerial = await generateNextUniqueRakeSerialNumber(currentRakeSerial);
-          currentRakeSerial = assignedRakeSerial; // Update for next iteration
-          console.log(`[GENERATE MULTIPLE RAKE SERIAL] Assigning sequential rake serial ${assignedRakeSerial} to indent ${indentNum}`);
-        }
-
-        // ✅ CRITICAL FIX: During splitting, always create NEW dashboard record for each indent
-        // The parent record (with null indent_number) should NOT be updated - it will be deleted later
-        // Get indent-specific data from wagons (customer_id, commodity, wagon_destination may differ per indent)
-        const indentWagonData = await pool.query(
-          `SELECT DISTINCT customer_id, commodity, wagon_destination 
+      // ✅ CRITICAL FIX: During splitting, always create NEW dashboard record for each indent
+      // The parent record (with null indent_number) should NOT be updated - it will be deleted later
+      // Get indent-specific data from wagons (customer_id, commodity, wagon_destination may differ per indent)
+      const indentWagonData = await pool.query(
+        `SELECT DISTINCT customer_id, commodity, wagon_destination 
            FROM wagon_records 
            WHERE rake_serial_number = $1 AND indent_number = $2 
            LIMIT 1`,
-          [rakeSerialNumber, indentNum]
-        );
-        
-        const indentCustomerId = indentWagonData.rows[0]?.customer_id || parentDashboard?.customer_id || null;
-        const indentCommodity = indentWagonData.rows[0]?.commodity || parentDashboard?.commodity || null;
-        const indentWagonDestination = indentWagonData.rows[0]?.wagon_destination || parentDashboard?.wagon_destination || null;
+        [rakeSerialNumber, indentNum]
+      );
 
-        // ✅ FIX: Create new dashboard record for this indent, copying data from parent
-        // Use indent-specific data from wagons if available, otherwise use parent data
-        // Preserve multiple_indent_confirmed flag from parent (child records inherit the flag)
-        await pool.query(
-          `
+      const indentCustomerId = indentWagonData.rows[0]?.customer_id || parentDashboard?.customer_id || null;
+      const indentCommodity = indentWagonData.rows[0]?.commodity || parentDashboard?.commodity || null;
+      const indentWagonDestination = indentWagonData.rows[0]?.wagon_destination || parentDashboard?.wagon_destination || null;
+
+      // ✅ FIX: Create new dashboard record for this indent, copying data from parent
+      // Use indent-specific data from wagons if available, otherwise use parent data
+      // Preserve multiple_indent_confirmed flag from parent (child records inherit the flag)
+      await pool.query(
+        `
           INSERT INTO dashboard_records (
             rake_serial_number, indent_number, customer_id, commodity, 
             wagon_destination, status, single_indent, hl_only, siding, 
@@ -3563,53 +4000,53 @@ const { trainId } = req.params;
             AND (indent_number IS NULL OR indent_number = '')
           LIMIT 1
           `,
-          [assignedRakeSerial, indentNum, indentCustomerId, indentCommodity, indentWagonDestination, rakeSerialNumber]
-        );
-        console.log(`[GENERATE MULTIPLE RAKE SERIAL] Created dashboard record for indent ${indentNum} with rake_serial_number=${assignedRakeSerial}`);
+        [assignedRakeSerial, indentNum, indentCustomerId, indentCommodity, indentWagonDestination, rakeSerialNumber]
+      );
+      console.log(`[GENERATE MULTIPLE RAKE SERIAL] Created dashboard record for indent ${indentNum} with rake_serial_number=${assignedRakeSerial}`);
 
-        // ✅ CRITICAL FIX: Instead of INSERTing new wagons, UPDATE existing wagons' rake_serial_number
-        // This preserves ALL fields (including loading times) automatically since we're only updating rake_serial_number
-        // Wagons should already exist in the database (saved by saveDraft with indent numbers)
-        // We just need to update their rake_serial_number to the assigned value
-        
-        // ✅ CRITICAL FIX: UPDATE existing wagons' rake_serial_number (preserves ALL fields including loading times)
-        // Only update rake_serial_number - all other fields remain unchanged
-        await pool.query(
-          `
+      // ✅ CRITICAL FIX: Instead of INSERTing new wagons, UPDATE existing wagons' rake_serial_number
+      // This preserves ALL fields (including loading times) automatically since we're only updating rake_serial_number
+      // Wagons should already exist in the database (saved by saveDraft with indent numbers)
+      // We just need to update their rake_serial_number to the assigned value
+
+      // ✅ CRITICAL FIX: UPDATE existing wagons' rake_serial_number (preserves ALL fields including loading times)
+      // Only update rake_serial_number - all other fields remain unchanged
+      await pool.query(
+        `
           UPDATE wagon_records
           SET rake_serial_number = $1
           WHERE (rake_serial_number = $2 OR rake_serial_number = $3)
             AND indent_number = $4
           `,
-          [assignedRakeSerial, rakeSerialNumber, decodedTrainId, indentNum]
-        );
+        [assignedRakeSerial, rakeSerialNumber, decodedTrainId, indentNum]
+      );
 
-        // ✅ CRITICAL FIX: No need to copy loading times separately - UPDATE preserves ALL fields automatically
-        // Since we're only updating rake_serial_number, all other fields (including loading times) are preserved
-        // This is much simpler and more reliable than trying to copy individual fields
-        console.log(`[GENERATE MULTIPLE RAKE SERIAL] ✅ Updated rake_serial_number for indent ${indentNum} to ${assignedRakeSerial} - all fields (including loading times) preserved automatically`);
+      // ✅ CRITICAL FIX: No need to copy loading times separately - UPDATE preserves ALL fields automatically
+      // Since we're only updating rake_serial_number, all other fields (including loading times) are preserved
+      // This is much simpler and more reliable than trying to copy individual fields
+      console.log(`[GENERATE MULTIPLE RAKE SERIAL] ✅ Updated rake_serial_number for indent ${indentNum} to ${assignedRakeSerial} - all fields (including loading times) preserved automatically`);
 
-        // ✅ FIX: Handle dispatch_records for this indent
-        const existingDispatchForIndent = parentDispatchRecords.rows.find(r => 
-          r.indent_number === indentNum
-        );
+      // ✅ FIX: Handle dispatch_records for this indent
+      const existingDispatchForIndent = parentDispatchRecords.rows.find(r =>
+        r.indent_number === indentNum
+      );
 
-        if (existingDispatchForIndent) {
-          // Update existing dispatch record - preserve ALL fields, only update rake_serial_number
-          await pool.query(
-            `
+      if (existingDispatchForIndent) {
+        // Update existing dispatch record - preserve ALL fields, only update rake_serial_number
+        await pool.query(
+          `
             UPDATE dispatch_records
             SET rake_serial_number = $1
             WHERE (rake_serial_number = $2 OR rake_serial_number = $3)
               AND indent_number = $4
             `,
-            [assignedRakeSerial, rakeSerialNumber, decodedTrainId, indentNum]
-          );
-        } else if (parentDispatch) {
-          // ✅ FIX: Create new dispatch record for this indent, copying ALL data from parent
-          // Copy all dispatch fields from parent dispatch record
-          await pool.query(
-            `
+          [assignedRakeSerial, rakeSerialNumber, decodedTrainId, indentNum]
+        );
+      } else if (parentDispatch) {
+        // ✅ FIX: Create new dispatch record for this indent, copying ALL data from parent
+        // Copy all dispatch fields from parent dispatch record
+        await pool.query(
+          `
             INSERT INTO dispatch_records (
               source, siding, indent_wagon_count, vessel_name, rake_type, status,
               rake_placement_datetime, rake_clearance_datetime, rake_idle_time,
@@ -3630,125 +4067,125 @@ const { trainId } = req.params;
               AND (indent_number IS NULL OR indent_number = '')
             LIMIT 1
             `,
-            [assignedRakeSerial, indentNum, rakeSerialNumber]
-          );
-        }
+          [assignedRakeSerial, indentNum, rakeSerialNumber]
+        );
+      }
 
-        // Create train_session entry for this indent if it doesn't exist
-        const trainSessionCheck = await pool.query(
-          "SELECT 1 FROM train_session WHERE rake_serial_number = $1 LIMIT 1",
-          [assignedRakeSerial]
+      // Create train_session entry for this indent if it doesn't exist
+      const trainSessionCheck = await pool.query(
+        "SELECT 1 FROM train_session WHERE rake_serial_number = $1 LIMIT 1",
+        [assignedRakeSerial]
+      );
+
+      if (trainSessionCheck.rows.length === 0) {
+        // Create new train_session entry for this sequential rake serial number
+        // Get wagon_count and siding from the original train_session entry
+        const originalTrainSession = await pool.query(
+          "SELECT wagon_count, siding FROM train_session WHERE rake_serial_number = $1 LIMIT 1",
+          [rakeSerialNumber]
         );
 
-        if (trainSessionCheck.rows.length === 0) {
-          // Create new train_session entry for this sequential rake serial number
-          // Get wagon_count and siding from the original train_session entry
-          const originalTrainSession = await pool.query(
-            "SELECT wagon_count, siding FROM train_session WHERE rake_serial_number = $1 LIMIT 1",
-            [rakeSerialNumber]
+        // Generate a unique train_id for this sequential entry
+        // train_id has a unique constraint, so each sequential entry needs its own unique train_id
+        let newTrainId;
+        let attempts = 0;
+        const maxAttempts = 100;
+
+        while (attempts < maxAttempts) {
+          newTrainId = `TRAIN-${String(Math.floor(Math.random() * 10000)).padStart(4, '0')}`;
+
+          // Check if this train_id already exists
+          const trainIdCheck = await pool.query(
+            "SELECT 1 FROM train_session WHERE train_id = $1 LIMIT 1",
+            [newTrainId]
           );
-          
-          // Generate a unique train_id for this sequential entry
-          // train_id has a unique constraint, so each sequential entry needs its own unique train_id
-          let newTrainId;
-          let attempts = 0;
-          const maxAttempts = 100;
-          
-          while (attempts < maxAttempts) {
-            newTrainId = `TRAIN-${String(Math.floor(Math.random() * 10000)).padStart(4, '0')}`;
-            
-            // Check if this train_id already exists
-            const trainIdCheck = await pool.query(
-              "SELECT 1 FROM train_session WHERE train_id = $1 LIMIT 1",
-              [newTrainId]
-            );
-            
-            if (trainIdCheck.rows.length === 0) {
-              // train_id is unique, use it
-              break;
-            }
-            
-            attempts++;
+
+          if (trainIdCheck.rows.length === 0) {
+            // train_id is unique, use it
+            break;
           }
-          
-          if (attempts >= maxAttempts) {
-            console.error(`[GENERATE MULTIPLE RAKE SERIAL] Failed to generate unique train_id after ${maxAttempts} attempts`);
-            throw new Error("Failed to generate unique train_id");
-          }
-          
-          const wagonCount = originalTrainSession.rows[0]?.wagon_count || null;
-          const sidingValue = originalTrainSession.rows[0]?.siding || null;
-          
-          await pool.query(
-            `
+
+          attempts++;
+        }
+
+        if (attempts >= maxAttempts) {
+          console.error(`[GENERATE MULTIPLE RAKE SERIAL] Failed to generate unique train_id after ${maxAttempts} attempts`);
+          throw new Error("Failed to generate unique train_id");
+        }
+
+        const wagonCount = originalTrainSession.rows[0]?.wagon_count || null;
+        const sidingValue = originalTrainSession.rows[0]?.siding || null;
+
+        await pool.query(
+          `
             INSERT INTO train_session (train_id, rake_serial_number, wagon_count, siding)
             VALUES ($1, $2, $3, $4)
             `,
-            [newTrainId, assignedRakeSerial, wagonCount, sidingValue]
-          );
-          
-          console.log(`[GENERATE MULTIPLE RAKE SERIAL] Created train_session entry: train_id=${newTrainId}, rake_serial_number=${assignedRakeSerial}`);
-        }
+          [newTrainId, assignedRakeSerial, wagonCount, sidingValue]
+        );
 
-        updatedTrainIds[indentNum] = assignedRakeSerial;
+        console.log(`[GENERATE MULTIPLE RAKE SERIAL] Created train_session entry: train_id=${newTrainId}, rake_serial_number=${assignedRakeSerial}`);
       }
 
-      // Delete the parent record (with null/empty indent_number) immediately when splitting
-      await pool.query(
-        "DELETE FROM dashboard_records WHERE rake_serial_number = $1 AND (indent_number IS NULL OR indent_number = '')",
-        [rakeSerialNumber]
-      );
-      console.log(`[GENERATE MULTIPLE RAKE SERIAL] Deleted parent record for ${rakeSerialNumber} when splitting into indents`);
-
-      res.json({
-        message: "Multiple rake serial numbers assigned successfully",
-        updatedTrainIds,
-        trainIdChanged: true,
-      });
-    } catch (err) {
-      console.error("GENERATE MULTIPLE RAKE SERIAL ERROR:", err);
-      res.status(500).json({ message: `Failed to generate serial numbers: ${err.message}` });
+      updatedTrainIds[indentNum] = assignedRakeSerial;
     }
+
+    // Delete the parent record (with null/empty indent_number) immediately when splitting
+    await pool.query(
+      "DELETE FROM dashboard_records WHERE rake_serial_number = $1 AND (indent_number IS NULL OR indent_number = '')",
+      [rakeSerialNumber]
+    );
+    console.log(`[GENERATE MULTIPLE RAKE SERIAL] Deleted parent record for ${rakeSerialNumber} when splitting into indents`);
+
+    res.json({
+      message: "Multiple rake serial numbers assigned successfully",
+      updatedTrainIds,
+      trainIdChanged: true,
+    });
+  } catch (err) {
+    console.error("GENERATE MULTIPLE RAKE SERIAL ERROR:", err);
+    res.status(500).json({ message: `Failed to generate serial numbers: ${err.message}` });
+  }
 };
 
 const markSerialHandled = async (req, res) => {
-const { trainId } = req.params;
-    // trainId may be URL encoded (e.g., "2025-26%2F01%2F001"), decode it
-    const decodedTrainId = decodeURIComponent(trainId);
+  const { trainId } = req.params;
+  // trainId may be URL encoded (e.g., "2025-26%2F01%2F001"), decode it
+  const decodedTrainId = decodeURIComponent(trainId);
 
-    try {
-      // First, find the actual train_id from dashboard_records
-      // Check both train_id and rake_serial_number
-      // ✅ FIX: URL trainId is now always rake_serial_number
-      const rakeSerialNumber = decodedTrainId;
+  try {
+    // First, find the actual train_id from dashboard_records
+    // Check both train_id and rake_serial_number
+    // ✅ FIX: URL trainId is now always rake_serial_number
+    const rakeSerialNumber = decodedTrainId;
 
-      // ✅ FIX: When "No" is selected, set has_sequential_serials = FALSE
-      // This prevents sequential train IDs from being assigned
-      // Use rakeSerialNumber for the update
-      const result = await pool.query(
-        `
+    // ✅ FIX: When "No" is selected, set has_sequential_serials = FALSE
+    // This prevents sequential train IDs from being assigned
+    // Use rakeSerialNumber for the update
+    const result = await pool.query(
+      `
         UPDATE dashboard_records
         SET has_sequential_serials = FALSE
         WHERE rake_serial_number = $1
         `,
-        [rakeSerialNumber]
-      );
+      [rakeSerialNumber]
+    );
 
-      // ✅ FIX: Explicitly delete any parent/single-indent records that might have persisted
-      await pool.query(
-        "DELETE FROM dashboard_records WHERE rake_serial_number = $1 AND (indent_number IS NULL OR indent_number = '' OR single_indent = true)",
-        [rakeSerialNumber]
-      );
+    // ✅ FIX: Explicitly delete any parent/single-indent records that might have persisted
+    await pool.query(
+      "DELETE FROM dashboard_records WHERE rake_serial_number = $1 AND (indent_number IS NULL OR indent_number = '' OR single_indent = true)",
+      [rakeSerialNumber]
+    );
 
-      if (result.rowCount === 0) {
-        return res.status(404).json({ message: "Train not found" });
-      }
-
-      res.json({ message: "Serial handling marked successfully (sequential numbers disabled)" });
-    } catch (err) {
-      console.error("MARK SERIAL HANDLED ERROR:", err);
-      res.status(500).json({ message: "Failed to mark serial handling" });
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Train not found" });
     }
+
+    res.json({ message: "Serial handling marked successfully (sequential numbers disabled)" });
+  } catch (err) {
+    console.error("MARK SERIAL HANDLED ERROR:", err);
+    res.status(500).json({ message: "Failed to mark serial handling" });
+  }
 };
 
 module.exports = {

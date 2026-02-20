@@ -324,6 +324,85 @@ const approveTask = async (req, res) => {
       activityNotes
     );
 
+    // ─── Notify super admins when reviewer approves/submits a task ───
+    (async () => {
+      try {
+        const { sendAlertEmail } = require("../services/emailService");
+        const { isValidEmail } = require("../utils/emailValidator");
+
+        const superAdminRes = await pool.query(
+          `SELECT u.email, u.username
+           FROM users u
+           WHERE u.role = 'SUPER_ADMIN'
+             AND u.is_active = true
+             AND u.email IS NOT NULL
+             AND u.email <> ''`
+        );
+
+        if (superAdminRes.rows.length === 0) {
+          console.log(`[APPROVE-NOTIFY] No active super admins found to notify`);
+          return;
+        }
+
+        const validRecipients = superAdminRes.rows.filter(u => isValidEmail(u.email));
+        if (validRecipients.length === 0) {
+          console.log(`[APPROVE-NOTIFY] No valid super admin email addresses found`);
+          return;
+        }
+
+        // Resolve indent_number from dashboard_records if not provided
+        let resolvedIndentNumber = indentNum;
+        if (!resolvedIndentNumber) {
+          const indentRes = await pool.query(
+            `SELECT indent_number FROM dashboard_records
+             WHERE rake_serial_number = $1
+             AND indent_number IS NOT NULL
+             AND indent_number <> ''
+             ORDER BY indent_number
+             LIMIT 1`,
+            [actualRakeSerialNumber]
+          );
+          resolvedIndentNumber = indentRes.rows[0]?.indent_number || null;
+        }
+
+        const recipientEmails = validRecipients.map(u => u.email);
+        const subject = `Reviewer Approved – Rake ${actualRakeSerialNumber}`;
+
+        const html = `
+          <div style="font-family:Arial,sans-serif;max-width:700px;">
+            <h2 style="color:#27ae60;">✅ Record Approved by Reviewer</h2>
+            <p>A rake entry has been reviewed and approved. Your final sign-off may be required.</p>
+            <table style="border-collapse:collapse;width:100%;margin:16px 0;">
+              <thead>
+                <tr style="background:#0B3A6E;color:#fff;">
+                  <th style="padding:8px 12px;text-align:left;">Rake Serial</th>
+                  <th style="padding:8px 12px;text-align:left;">Indent</th>
+                  <th style="padding:8px 12px;text-align:left;">Approved By</th>
+                  <th style="padding:8px 12px;text-align:left;">Approved At</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style="padding:8px 12px;border:1px solid #ddd;">${actualRakeSerialNumber}</td>
+                  <td style="padding:8px 12px;border:1px solid #ddd;">${resolvedIndentNumber || "-"}</td>
+                  <td style="padding:8px 12px;border:1px solid #ddd;">${reviewerUsername}</td>
+                  <td style="padding:8px 12px;border:1px solid #ddd;">${new Date().toLocaleString()}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p style="color:#555;font-size:13px;">
+              Please log in to the system to complete final approval for this entry.
+            </p>
+          </div>
+        `;
+
+        await sendAlertEmail(recipientEmails, subject, html);
+        console.log(`[APPROVE-NOTIFY] Approval notification sent to ${recipientEmails.join(", ")} for rake ${actualRakeSerialNumber} by reviewer ${reviewerUsername}`);
+      } catch (emailErr) {
+        console.error(`[APPROVE-NOTIFY] Failed to send approval notification:`, emailErr.message);
+      }
+    })();
+
     res.json({ message: "Task approved successfully" });
   } catch (err) {
     console.error("APPROVE TASK ERROR:", err);
@@ -425,6 +504,98 @@ const cancelTask = async (req, res) => {
       reviewerUsername,
       remarks ? `Indent cancelled: ${remarks}` : 'Indent cancelled by reviewer'
     );
+
+    // ─── Notify admins when reviewer cancels an indent ───
+    (async () => {
+      try {
+        const { sendAlertEmail } = require("../services/emailService");
+        const { isValidEmail } = require("../utils/emailValidator");
+
+        const adminRes = await pool.query(
+          `SELECT u.email, u.username
+           FROM users u
+           WHERE u.role = 'ADMIN'
+             AND u.is_active = true
+             AND u.email IS NOT NULL
+             AND u.email <> ''`
+        );
+
+        if (adminRes.rows.length === 0) {
+          console.log(`[CANCEL-NOTIFY] No active admins found to notify`);
+          return;
+        }
+
+        const validRecipients = adminRes.rows.filter(u => isValidEmail(u.email));
+        if (validRecipients.length === 0) {
+          console.log(`[CANCEL-NOTIFY] No valid admin email addresses found`);
+          return;
+        }
+
+        // Resolve indent_number from dashboard_records if not provided
+        let resolvedIndentNumber = indent_number || null;
+        if (!resolvedIndentNumber) {
+          const indentRes = await pool.query(
+            `SELECT indent_number FROM dashboard_records
+             WHERE rake_serial_number = $1
+             AND indent_number IS NOT NULL
+             AND indent_number <> ''
+             ORDER BY indent_number
+             LIMIT 1`,
+            [rakeSerialNumber]
+          );
+          resolvedIndentNumber = indentRes.rows[0]?.indent_number || null;
+        }
+
+        const recipientEmails = validRecipients.map(u => u.email);
+        const subject = `Indent Cancelled – Rake ${rakeSerialNumber}`;
+
+        const html = `
+          <div style="font-family:Arial,sans-serif;max-width:700px;">
+            <h2 style="color:#c0392b;">🚫 Indent Cancelled by Reviewer</h2>
+            <p>A rake indent has been cancelled by reviewer <strong>${reviewerUsername}</strong>.</p>
+            <table style="border-collapse:collapse;width:100%;margin:16px 0;">
+              <thead>
+                <tr style="background:#0B3A6E;color:#fff;">
+                  <th style="padding:8px 12px;text-align:left;">Rake Serial</th>
+                  <th style="padding:8px 12px;text-align:left;">Indent</th>
+                  <th style="padding:8px 12px;text-align:left;">Cancelled By</th>
+                  <th style="padding:8px 12px;text-align:left;">Cancelled At</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style="padding:8px 12px;border:1px solid #ddd;">${rakeSerialNumber}</td>
+                  <td style="padding:8px 12px;border:1px solid #ddd;">${resolvedIndentNumber || "-"}</td>
+                  <td style="padding:8px 12px;border:1px solid #ddd;">${reviewerUsername}</td>
+                  <td style="padding:8px 12px;border:1px solid #ddd;">${new Date().toLocaleString()}</td>
+                </tr>
+              </tbody>
+            </table>
+            ${remarks ? `
+            <table style="border-collapse:collapse;width:100%;margin:8px 0;">
+              <thead>
+                <tr style="background:#0B3A6E;color:#fff;">
+                  <th style="padding:8px 12px;text-align:left;">Cancellation Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style="padding:8px 12px;border:1px solid #ddd;">${remarks}</td>
+                </tr>
+              </tbody>
+            </table>` : ""}
+            <p style="color:#555;font-size:13px;">
+              Please log in to the system to take any necessary follow-up action.
+            </p>
+          </div>
+        `;
+
+        await sendAlertEmail(recipientEmails, subject, html);
+        console.log(`[CANCEL-NOTIFY] Cancellation email sent to ${recipientEmails.join(", ")} for rake ${rakeSerialNumber} by reviewer ${reviewerUsername}`);
+      } catch (emailErr) {
+        console.error(`[CANCEL-NOTIFY] Failed to send cancellation email for rake ${rakeSerialNumber}:`, emailErr.message);
+      }
+    })();
 
     res.json({ message: "Task cancelled successfully" });
   } catch (err) {

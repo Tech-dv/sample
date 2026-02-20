@@ -67,11 +67,7 @@ function Dashboard() {
       const role = localStorage.getItem("role");
       if (!role) return;
 
-      // TODO: Replace with actual alerts API endpoint when available
-      // For now, we'll fetch cameras and count inactive ones
-      // In the future, this should be: GET /alerts/count?spur=SPUR-8
-      
-      // Fetch cameras for both spurs to count inactive ones
+      // Fetch cameras for both spurs to count alerts
       const [spur8Res, spur9Res] = await Promise.all([
         fetch(`${API_BASE}/cameras?siding=SPUR-8`, {
           headers: { "x-user-role": role },
@@ -84,23 +80,23 @@ function Dashboard() {
       if (spur8Res.ok && spur9Res.ok) {
         const spur8Cameras = await spur8Res.json();
         const spur9Cameras = await spur9Res.json();
-        
-        // Count inactive cameras (for now)
-        // TODO: When alerts API is ready, fetch all alert types:
-        // const [spur8Alerts, spur9Alerts] = await Promise.all([
-        //   fetch(`${API_BASE}/alerts/count?spur=SPUR-8`),
-        //   fetch(`${API_BASE}/alerts/count?spur=SPUR-9`),
-        // ]);
-        // This will include inactive, shaking, and blur alerts
-        
-        const spur8Inactive = spur8Cameras.filter(cam => !cam.status).length;
-        const spur9Inactive = spur9Cameras.filter(cam => !cam.status).length;
-        
-        // TODO: Add counts for shaking and blur alerts when API is available
-        // For now, only counting inactive cameras
+
+        // Count all alert types per spur:
+        //   inactive (status === false) + blur (blur === true) + shaking (shaking === true)
+        // Each issue on a camera adds 1 to the combined count.
+        const countAlerts = (cameras) => {
+          let count = 0;
+          cameras.forEach((cam) => {
+            if (!cam.status) count++;   // inactive
+            if (cam.blur) count++;      // blur detected
+            if (cam.shaking) count++;   // shaking detected
+          });
+          return count;
+        };
+
         setAlertCounts({
-          "SPUR-8": spur8Inactive, // TODO: Add + shakingCount + blurCount
-          "SPUR-9": spur9Inactive, // TODO: Add + shakingCount + blurCount
+          "SPUR-8": countAlerts(spur8Cameras),
+          "SPUR-9": countAlerts(spur9Cameras),
         });
       }
     } catch (err) {
@@ -770,8 +766,8 @@ function Dashboard() {
                             label="View"
                             onClick={() => {
                               const url = row.indent_number
-                                ? `/view/${encodeURIComponent(row.train_id)}?indent_number=${encodeURIComponent(row.indent_number)}`
-                                : `/view/${encodeURIComponent(row.train_id)}`;
+                                ? `/customer/view/${encodeURIComponent(row.train_id)}?indent_number=${encodeURIComponent(row.indent_number)}`
+                                : `/customer/view/${encodeURIComponent(row.train_id)}`;
                               navigate(url);
                             }}
                           />
@@ -963,8 +959,12 @@ const styles = {
 
   card: {
     backgroundColor: "#dbdbdbff",
-    padding: "20px",
-    borderRadius: "2px",
+    padding: "15px 20px",
+    borderRadius: "16px",
+    minHeight: "70px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   cardTitle: {
@@ -1020,6 +1020,7 @@ const styles = {
     fontSize: "11px",
     textAlign: "center",
     fontWeight: "600",
+    borderRadius: "8px",
     // border: "0.48px solid #000000",
   },
 
@@ -1031,6 +1032,7 @@ const styles = {
     padding: "16px 8px",
     fontSize: "11px",
     textAlign: "center",
+    borderRadius: "8px",
     // border: "0.48px solid #000000",
     color: "#000000",
   },

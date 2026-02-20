@@ -16,9 +16,13 @@ async function updateExcelWithCustomers(excelFilePath) {
     // Read existing Excel file
     const workbook = XLSX.readFile(excelFilePath);
 
-    // Fetch all customers from database
+    // Fetch only active customers from database
     const customersRes = await pool.query(
-      "SELECT id, customer_name FROM customers ORDER BY id ASC"
+      `SELECT c.id, c.customer_name
+       FROM customers c
+       JOIN users u ON u.customer_id = c.id AND u.role = 'CUSTOMER'
+       WHERE u.is_active = true
+       ORDER BY c.id ASC`
     );
 
     // Prepare Customers_Master sheet data

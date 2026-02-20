@@ -6,7 +6,11 @@ const { validateEmail } = require("../utils/emailValidator");
 const getCustomers = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, customer_name FROM customers ORDER BY customer_name`
+      `SELECT c.id, c.customer_name
+       FROM customers c
+       JOIN users u ON u.customer_id = c.id AND u.role = 'CUSTOMER'
+       WHERE u.is_active = true
+       ORDER BY c.customer_name`
     );
     res.json(result.rows);
   } catch (err) {

@@ -31,7 +31,9 @@ const getCameras = async (req, res) => {
         id,
         camera_name,
         siding,
-        status
+        status,
+        blur,
+        shaking
       FROM camera_records
       WHERE ${conditions.join(" AND ")}
       ORDER BY camera_name

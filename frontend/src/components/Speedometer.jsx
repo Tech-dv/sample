@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 
 const Speedometer = ({
   loaded = 0,
@@ -7,6 +7,10 @@ const Speedometer = ({
   totalLabel = "",
   balanceTotalLabel = ""
 }) => {
+  const [showTooltip, setShowTooltip] = useState(false);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+
+  const balance = Math.max(total - loaded, 0);
   const percent = total > 0 ? Math.min(loaded / total, 1) : 0;
   const angle = percent * 180;
 
@@ -51,8 +55,22 @@ const Speedometer = ({
   const ax = cx + arrowLen * Math.cos(arrowRad);
   const ay = cy + arrowLen * Math.sin(arrowRad);
 
+  // Tooltip handler
+  const handleMouseMove = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setTooltipPos({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    });
+  };
+
   return (
-    <div style={styles.container}>
+    <div
+      style={styles.container}
+      onMouseEnter={() => setShowTooltip(true)}
+      onMouseLeave={() => setShowTooltip(false)}
+      onMouseMove={handleMouseMove}
+    >
       <svg width={width} height={height}>
 
         {/* Balance */}
@@ -114,7 +132,7 @@ const Speedometer = ({
         </text>
       </svg>
 
-      {/* Left label */}
+      {/* Left label - Total */}
       <div
         style={{
           position: "absolute",
@@ -128,9 +146,12 @@ const Speedometer = ({
         }}
       >
         {totalLabel}
+        <div style={{ fontSize: "18px", fontWeight: 900, marginTop: "4px", color: "#0b3a78" }}>
+          {total}
+        </div>
       </div>
 
-      {/* Right label */}
+      {/* Right label - Balance */}
       <div
         style={{
           position: "absolute",
@@ -144,7 +165,33 @@ const Speedometer = ({
         }}
       >
         {balanceTotalLabel}
+        <div style={{ fontSize: "18px", fontWeight: 900, marginTop: "4px", color: "#8b8f94" }}>
+          {balance}
+        </div>
       </div>
+
+      {/* Tooltip on hover */}
+      {showTooltip && (
+        <div
+          style={{
+            position: "absolute",
+            left: tooltipPos.x + 12,
+            top: tooltipPos.y - 36,
+            background: "rgba(0, 0, 0, 0.85)",
+            color: "#fff",
+            padding: "6px 14px",
+            borderRadius: "6px",
+            fontSize: "14px",
+            fontWeight: 700,
+            whiteSpace: "nowrap",
+            pointerEvents: "none",
+            zIndex: 10,
+            boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+          }}
+        >
+          {loaded} / {total}
+        </div>
+      )}
     </div>
   );
 };
@@ -154,7 +201,8 @@ const styles = {
     width: "520px",
     height: "330px",
     position: "relative",
-    flexShrink: 0
+    flexShrink: 0,
+    cursor: "pointer",
   }
 };
 
