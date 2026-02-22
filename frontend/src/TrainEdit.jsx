@@ -7,6 +7,7 @@ import DraftSavePopup from "./components/DraftSavePopup";
 import MultipleRakeSerialPopup from "./components/MultipleRakeSerialPopup";
 import WarningPopup from "./components/WarningPopup";
 import DeleteConfirmPopup from "./components/DeleteConfirmPopup";
+import { urlParamToId, idToUrlParam } from "./utils/trainIdUtils";
 
 
 import {
@@ -63,7 +64,7 @@ function BoxedField({ label, value, onChange, readOnly, isSelect, children }) {
 
 function TrainEdit() {
   const { trainId: encodedTrainId } = useParams();
-  const trainId = encodedTrainId ? decodeURIComponent(encodedTrainId) : null;
+  const trainId = encodedTrainId ? urlParamToId(encodedTrainId) : null;
   const [searchParams] = useSearchParams();
   const indentNumber = searchParams.get('indent_number');
   const navigate = useNavigate();
@@ -174,7 +175,7 @@ function TrainEdit() {
 
   // ✅ FIX: Track wagons that have been manually toggled (to preserve manual status on save)
   const [manuallyToggledWagons, setManuallyToggledWagons] = useState(new Set());
-  
+
   // ✅ FIX: Track previous bag counts to detect changes (avoid infinite loops)
   const prevBagCountsRef = useRef("");
 
@@ -189,10 +190,10 @@ function TrainEdit() {
       // Filter out empty strings and normalize to ensure consistent comparison
       const normalizedSealNumbers = (w.seal_numbers && Array.isArray(w.seal_numbers))
         ? w.seal_numbers
-            .map(s => s != null ? String(s).trim() : "")
-            .filter(s => s !== "") // Remove empty strings for comparison
+          .map(s => s != null ? String(s).trim() : "")
+          .filter(s => s !== "") // Remove empty strings for comparison
         : [];
-      
+
       // Only user-editable fields, exclude auto-populated ones
       const editableFields = {
         wagon_number: w.wagon_number || "",
@@ -255,8 +256,8 @@ function TrainEdit() {
       try {
         // Build URL with indent_number query parameter if provided
         const url = indentNumber
-          ? `${API_BASE}/train/${encodeURIComponent(trainId)}/edit?indent_number=${encodeURIComponent(indentNumber)}`
-          : `${API_BASE}/train/${encodeURIComponent(trainId)}/edit`;
+          ? `${API_BASE}/train/${idToUrlParam(trainId)}/edit?indent_number=${encodeURIComponent(indentNumber)}`
+          : `${API_BASE}/train/${idToUrlParam(trainId)}/edit`;
 
         const res = await fetch(url);
         if (!res.ok) return;
@@ -372,13 +373,13 @@ function TrainEdit() {
             // ✅ CRITICAL FIX: Remove seal_number from the object to avoid conflicts
             // We only use seal_numbers array, not seal_number string from database
             const { seal_number: _, ...wagonWithoutSealNumber } = w;
-            
+
             // ✅ CRITICAL FIX: If condition is met but DB has false, auto-update to true
             // This handles the case where auto-update happened but wasn't saved
             // This is NOT a manual toggle - it's just an unsaved auto-update
             // Only explicit user clicks on the toggle button will be treated as manual toggles
             const finalLoadingStatus = calculatedStatus ? true : dbLoadingStatus;
-            
+
             return {
               ...wagonWithoutSealNumber,
               // If wagonTypeHL option is true, set wagon_type to "HL", otherwise use existing value
@@ -487,7 +488,7 @@ function TrainEdit() {
         // Always use fresh API data (no auto-save/restore)
         setTrainHeader(apiHeader);
         setWagons(apiWagons);
-        
+
         // Set original state after loading fresh data
         setOriginalState({
           trainHeader: apiHeader,
@@ -520,17 +521,17 @@ function TrainEdit() {
   // Do NOT update when loading_end_time changes
   useEffect(() => {
     if (wagons.length === 0) return;
-    
+
     // Create a key from bag counts and wagon_to_be_loaded (NOT loading_end_time)
     const currentBagCountsKey = wagons.map(w => `${w.tower_number}:${w.loaded_bag_count}:${w.wagon_to_be_loaded}`).join('|');
-    
+
     // Only proceed if bag counts or wagon_to_be_loaded actually changed
     if (currentBagCountsKey === prevBagCountsRef.current) {
       return;
     }
-    
+
     prevBagCountsRef.current = currentBagCountsKey;
-    
+
     const updated = wagons.map(w => {
       // Calculate status based on bag counts ONLY
       // Status is true when loaded_bag_count >= wagon_to_be_loaded
@@ -540,7 +541,7 @@ function TrainEdit() {
         ? Number(wagonToBeLoadedValue)
         : null;
       const loadedBagCount = Number(w.loaded_bag_count) || 0;
-      
+
       // If wagon_to_be_loaded is null, status must be false (can't compare null)
       // This overrides any manual toggle - null means incomplete
       if (wagonToBeLoaded == null) {
@@ -549,10 +550,10 @@ function TrainEdit() {
         }
         return w;
       }
-      
+
       const calculatedStatus = loadedBagCount >= wagonToBeLoaded;
       const isManuallyToggled = manuallyToggledWagons.has(w.tower_number);
-      
+
       // ✅ CRITICAL FIX: Check condition but respect manual overrides
       // If user manually toggled OFF (even when condition is met), preserve OFF state
       // If user manually toggled ON (even when condition is not met), preserve ON state
@@ -581,7 +582,7 @@ function TrainEdit() {
         }
         return w;
       }
-      
+
       // Condition is NOT met (loadedBagCount < wagonToBeLoaded)
       // Status should normally be FALSE, unless user explicitly set it to true
       if (!calculatedStatus) {
@@ -606,9 +607,9 @@ function TrainEdit() {
         }
         return w;
       }
-      
+
       return w;
-      
+
       return w;
     });
 
@@ -616,7 +617,7 @@ function TrainEdit() {
     const hasChanges = updated.some((w, i) => w.loading_status !== wagons[i].loading_status);
     if (hasChanges) {
       setWagons(updated);
-      
+
       // Also remove wagons with null wagon_to_be_loaded from manually toggled set
       const wagonsWithNullTarget = updated.filter(w => {
         const wagonToBeLoadedValue = w.wagon_to_be_loaded != null ? String(w.wagon_to_be_loaded) : "";
@@ -625,7 +626,7 @@ function TrainEdit() {
           : null;
         return wagonToBeLoaded == null;
       });
-      
+
       if (wagonsWithNullTarget.length > 0) {
         setManuallyToggledWagons(prev => {
           const newSet = new Set(prev);
@@ -676,12 +677,12 @@ function TrainEdit() {
           ? Number(wagonToBeLoadedValue)
           : null;
         const loadedBagCount = Number(wagon.loaded_bag_count) || 0;
-        
+
         // If wagon_to_be_loaded is null (not filled), status must be false (can't compare null)
         if (wagonToBeLoaded == null) {
           return false;
         }
-        
+
         // Status is true if loaded_bag_count >= wagon_to_be_loaded
         return loadedBagCount >= wagonToBeLoaded;
       };
@@ -703,7 +704,7 @@ function TrainEdit() {
           // Check if the new value is null or empty
           const newValue = value != null ? String(value).trim() : "";
           const isNull = newValue === "";
-          
+
           if (isNull) {
             // If wagon_to_be_loaded becomes null, force status to false
             // and remove from manually toggled set (null means incomplete)
@@ -747,13 +748,13 @@ function TrainEdit() {
 
         // Update the cascaded field
         updatedWagon[field] = value;
-        
+
         // ✅ FIX: Auto-update loading_status when wagon_to_be_loaded cascades
         if (field === "wagon_to_be_loaded") {
           // Check if the new value is null or empty
           const newValue = value != null ? String(value).trim() : "";
           const isNull = newValue === "";
-          
+
           if (isNull) {
             // If wagon_to_be_loaded becomes null, force status to false
             // and remove from manually toggled set (null means incomplete)
@@ -776,7 +777,7 @@ function TrainEdit() {
         }
         // ✅ FIX: Do NOT update loading_status when loading_end_time or loading_start_time changes
         // These are auto-populated fields and should not affect loading_status
-        
+
         return updatedWagon;
       }
 
@@ -798,7 +799,7 @@ function TrainEdit() {
       ? Number(wagonToBeLoadedValue)
       : null;
     const loadedBagCount = Number(wagon.loaded_bag_count) || 0;
-    
+
     // Calculate if condition is met
     const conditionMet = wagonToBeLoaded != null && loadedBagCount >= wagonToBeLoaded;
 
@@ -824,7 +825,7 @@ function TrainEdit() {
 
     try {
       await fetch(
-        `${API_BASE}/wagon/${encodeURIComponent(trainId)}/${wagon.tower_number}/status`,
+        `${API_BASE}/wagon/${idToUrlParam(trainId)}/${wagon.tower_number}/status`,
         {
           method: "PUT",
           headers: {
@@ -849,7 +850,7 @@ function TrainEdit() {
 
     const updated = [...wagons];
     const wagon = updated[pendingToggleIndex];
-    
+
     // Set status to false
     wagon.loading_status = false;
     setWagons(updated);
@@ -864,7 +865,7 @@ function TrainEdit() {
 
     try {
       await fetch(
-        `${API_BASE}/wagon/${encodeURIComponent(trainId)}/${wagon.tower_number}/status`,
+        `${API_BASE}/wagon/${idToUrlParam(trainId)}/${wagon.tower_number}/status`,
         {
           method: "PUT",
           headers: {
@@ -1099,8 +1100,8 @@ function TrainEdit() {
     try {
       // Build URL with indent_number query parameter if provided
       const url = indentNumber
-        ? `${API_BASE}/train/${encodeURIComponent(trainId)}/edit?indent_number=${encodeURIComponent(indentNumber)}`
-        : `${API_BASE}/train/${encodeURIComponent(trainId)}/edit`;
+        ? `${API_BASE}/train/${idToUrlParam(trainId)}/edit?indent_number=${encodeURIComponent(indentNumber)}`
+        : `${API_BASE}/train/${idToUrlParam(trainId)}/edit`;
 
       const res = await fetch(url);
       if (!res.ok) {
@@ -1109,7 +1110,7 @@ function TrainEdit() {
       }
 
       const data = await res.json();
-      
+
       if (!data.wagons || data.wagons.length === 0) {
         return;
       }
@@ -1172,18 +1173,18 @@ function TrainEdit() {
   /* ================= CHECK FOR CHANGES ================= */
   const hasChanges = () => {
     if (!originalState) return true; // If no original state, assume there are changes
-    
+
     const currentState = {
       trainHeader,
       wagons: getUserEditableFields(wagons),
     };
-    
+
     // Compare trainHeader
     const headerChanged = JSON.stringify(currentState.trainHeader) !== JSON.stringify(originalState.trainHeader);
-    
+
     // Compare wagons (deep comparison)
     const wagonsChanged = JSON.stringify(currentState.wagons) !== JSON.stringify(originalState.wagons);
-    
+
     // ✅ DEBUG: Log change detection for seal numbers and loading_status
     if (wagonsChanged) {
       console.log(`[CHANGE DETECTION] Wagons changed detected`);
@@ -1192,7 +1193,7 @@ function TrainEdit() {
         const originalSeals = originalState.wagons[i]?.seal_numbers || [];
         const currentSeals = w.seal_numbers || [];
         if (JSON.stringify(originalSeals) !== JSON.stringify(currentSeals)) {
-          console.log(`[CHANGE DETECTION] Wagon ${i+1} (tower ${w.tower_number}) seal numbers changed:`, {
+          console.log(`[CHANGE DETECTION] Wagon ${i + 1} (tower ${w.tower_number}) seal numbers changed:`, {
             original: originalSeals,
             current: currentSeals
           });
@@ -1201,7 +1202,7 @@ function TrainEdit() {
         const originalStatus = originalState.wagons[i]?.loading_status || false;
         const currentStatus = w.loading_status || false;
         if (originalStatus !== currentStatus) {
-          console.log(`[CHANGE DETECTION] Wagon ${i+1} (tower ${w.tower_number}) loading_status changed:`, {
+          console.log(`[CHANGE DETECTION] Wagon ${i + 1} (tower ${w.tower_number}) loading_status changed:`, {
             original: originalStatus,
             current: currentStatus
           });
@@ -1210,7 +1211,7 @@ function TrainEdit() {
     } else {
       console.log(`[CHANGE DETECTION] No changes detected - wagons are identical`);
     }
-    
+
     return headerChanged || wagonsChanged;
   };
 
@@ -1218,10 +1219,10 @@ function TrainEdit() {
   const saveDraft = async (showPopup = true) => {
     // Check if there are any changes
     const hasChangesValue = hasChanges();
-    
+
     console.log(`[SAVE DRAFT] Called with showPopup=${showPopup}, hasChangesValue=${hasChangesValue}`);
     console.log(`[SAVE DRAFT] Current wagons count: ${wagons.length}, originalState exists: ${!!originalState}`);
-    
+
     if (!hasChangesValue) {
       // No changes - if showPopup is true (Save button), show popup and redirect to Dashboard
       // If showPopup is false (Proceed button), just return true without redirect
@@ -1232,9 +1233,9 @@ function TrainEdit() {
       }
       return true;
     }
-    
+
     console.log(`[SAVE DRAFT] Changes detected - proceeding with save`);
-    
+
     try {
       const wagonsWithHeader = wagons.map(w => {
         // ✅ FIX: Exclude auto-populated fields (loading_start_time, loading_end_time, loaded_bag_count, unloaded_bag_count)
@@ -1253,7 +1254,7 @@ function TrainEdit() {
         // ✅ FIX: If wagon was manually toggled to true, preserve that status
         // Otherwise, let backend calculate it based on bag counts
         const isManuallyToggled = manuallyToggledWagons.has(w.tower_number);
-        
+
         // ✅ CRITICAL: Get loaded_bag_count for condition check (needed to determine if we should send loading_status)
         // Even though we don't send bag counts, we need them to check if condition is met
         const loadedBagCount = Number(w.loaded_bag_count) || 0;
@@ -1311,7 +1312,7 @@ function TrainEdit() {
         // ✅ CRITICAL FIX: Always include loading_status when condition is met or manually toggled
         // Calculate if condition is met: loadedBagCount >= wagonToBeLoaded
         const conditionMet = wagonToBeLoaded != null && loadedBagCount >= wagonToBeLoaded;
-        
+
         // Always include loading_status if:
         // 1. Condition is met (loadedBagCount >= wagonToBeLoaded) - send the current status (should be true)
         // 2. Wagon was manually toggled - send the user's explicit choice
@@ -1327,7 +1328,7 @@ function TrainEdit() {
         return wagonPayload;
       });
 
-      const res = await fetch(`${API_BASE}/train/${encodeURIComponent(trainId)}/draft`, {
+      const res = await fetch(`${API_BASE}/train/${idToUrlParam(trainId)}/draft`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1365,7 +1366,7 @@ function TrainEdit() {
       const responseData = await res.json();
 
       setIsSaved(true);
-      
+
       // Update original state after successful save
       setOriginalState({
         trainHeader,
@@ -1483,57 +1484,57 @@ function TrainEdit() {
         return false;
       }
     }
-    
+
     // Check all wagons - all fields must be filled except remarks
     if (wagons.length === 0) {
       return false;
     }
-    
+
     for (const w of wagons) {
       // Check required wagon fields (remarks is optional)
       // Convert all values to string for consistent checking
       const wagonNumber = w.wagon_number != null ? String(w.wagon_number).trim() : "";
       if (wagonNumber === "") return false;
-      
+
       const wagonType = w.wagon_type != null ? String(w.wagon_type).trim() : "";
       if (wagonType === "") return false;
-      
+
       // cc_weight: must be a valid number > 0
       const ccWeightStr = w.cc_weight != null ? String(w.cc_weight).trim() : "";
       if (ccWeightStr === "" || ccWeightStr === "0" || isNaN(Number(ccWeightStr))) return false;
-      
+
       const commodity = w.commodity != null ? String(w.commodity).trim() : "";
       if (commodity === "") return false;
-      
+
       // Seal numbers: at least one non-empty seal number required
-      if (!w.seal_numbers || !Array.isArray(w.seal_numbers) || w.seal_numbers.length === 0 || 
-          !w.seal_numbers.some(s => s != null && String(s).trim() !== "")) return false;
-      
+      if (!w.seal_numbers || !Array.isArray(w.seal_numbers) || w.seal_numbers.length === 0 ||
+        !w.seal_numbers.some(s => s != null && String(s).trim() !== "")) return false;
+
       // Stoppage time is now required
       const stoppageTime = w.stoppage_time != null ? String(w.stoppage_time).trim() : "";
       if (stoppageTime === "") return false;
-      
+
       // Loading Start Date & Time is required (even though auto-populated)
       const loadingStartTime = w.loading_start_time != null ? String(w.loading_start_time).trim() : "";
       if (loadingStartTime === "" || loadingStartTime === "-") return false;
-      
+
       // Loading End Date & Time is required (even though auto-populated)
       const loadingEndTime = w.loading_end_time != null ? String(w.loading_end_time).trim() : "";
       if (loadingEndTime === "" || loadingEndTime === "-") return false;
-      
+
       // For multiple indent mode, check wagon-level fields
       if (!editOptions.singleIndent) {
         const indentNumber = w.indent_number != null ? String(w.indent_number).trim() : "";
         if (indentNumber === "") return false;
-        
+
         const wagonDestination = w.wagon_destination != null ? String(w.wagon_destination).trim() : "";
         if (wagonDestination === "") return false;
-        
+
         const customerId = w.customer_id != null ? String(w.customer_id).trim() : "";
         if (customerId === "") return false;
       }
     }
-    
+
     return true;
   };
 
@@ -1544,13 +1545,13 @@ function TrainEdit() {
       params.append("indent_number", indentNum);
     }
     params.append("wagon_details_complete", isWagonDetailsComplete ? "true" : "false");
-    return `/train/${encodeURIComponent(trainId)}/dispatch?${params.toString()}`;
+    return `/train/${idToUrlParam(trainId)}/dispatch?${params.toString()}`;
   };
 
   /* ================= PROCEED ================= */
   const proceed = async () => {
     // Allow proceeding even if form is not completely filled
-    
+
     // ✅ Check if multiple indent mode requires at least 2 indent numbers
     // Skip this validation for child records (when indentNumber is present in URL)
     if (!editOptions.singleIndent && !indentNumber) {
@@ -1560,7 +1561,7 @@ function TrainEdit() {
         return;
       }
     }
-    
+
     // ✅ Check if all wagons for each indent number have wagon numbers filled
     // This validation applies to both parent and child records in multiple indent mode
     if (!editOptions.singleIndent) {
@@ -1573,26 +1574,26 @@ function TrainEdit() {
           // Only check if wagon number is missing
           return wagonNumber === "";
         });
-        
+
         if (hasIncompleteWagons) {
           incompleteIndentNumbers.push(indentNum);
         }
       }
-      
+
       if (incompleteIndentNumbers.length > 0) {
         const indentList = incompleteIndentNumbers.join(", ");
-        setWarning({ 
-          open: true, 
-          message: `Please fill wagon numbers for the following indent number(s): ${indentList}`, 
-          title: "Warning" 
+        setWarning({
+          open: true,
+          message: `Please fill wagon numbers for the following indent number(s): ${indentList}`,
+          title: "Warning"
         });
         return;
       }
     }
-    
+
     // ✅ Check if form is valid to pass flag to DispatchPage
     const isWagonDetailsComplete = isFormValid();
-    
+
     // ✅ FIX: Use the same save logic as Save button, but without showing popup
     // This ensures all the same validation and error handling
     const saveSuccess = await saveDraft(false);
@@ -1601,7 +1602,7 @@ function TrainEdit() {
       setWarning({ open: true, message: "Failed to save changes. Please fix any errors and try again.", title: "Error" });
       return;
     }
-    
+
     // ✅ FIX: Add longer delay to ensure backend save completes and database is fully updated
     // This ensures loading times are preserved in the database before DispatchPage loads
     // Increased to 1000ms to give backend enough time to process DELETE, INSERT, and UPDATE operations
@@ -1616,7 +1617,7 @@ function TrainEdit() {
     // After saveDraft, the URL might have been updated if train_id changed
     const currentUrl = window.location.pathname;
     const urlMatch = currentUrl.match(/\/train\/([^/]+)\/edit/);
-    const currentTrainId = urlMatch ? decodeURIComponent(urlMatch[1]) : trainId;
+    const currentTrainId = urlMatch ? urlParamToId(urlMatch[1]) : trainId;
 
     // ✅ FIX: Show popup in multiple indent mode when clicking Proceed, but skip for child nodes
     // Child nodes are identified by the presence of indentNumber in the URL
@@ -1627,7 +1628,7 @@ function TrainEdit() {
       setShowMultipleRakePopup(true);
       return;
     }
-    
+
     // For child nodes (indentNumber present), skip popup and proceed directly
     if (!editOptions.singleIndent && indentNumber) {
       console.log("Child node detected - skipping popup and proceeding directly");
@@ -1656,7 +1657,7 @@ function TrainEdit() {
       }
 
       // Call backend to set flag for sequential serial numbers (they will be assigned when counting starts)
-      const res = await fetch(`${API_BASE}/train/${encodeURIComponent(trainId)}/generate-multiple-rake-serial`, {
+      const res = await fetch(`${API_BASE}/train/${idToUrlParam(trainId)}/generate-multiple-rake-serial`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1695,7 +1696,7 @@ function TrainEdit() {
 
     try {
       // Mark that the serial number question has been answered (even though "No" was selected)
-      await fetch(`${API_BASE}/train/${encodeURIComponent(trainId)}/mark-serial-handled`, {
+      await fetch(`${API_BASE}/train/${idToUrlParam(trainId)}/mark-serial-handled`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -2431,14 +2432,14 @@ function TrainEdit() {
             Save
           </button>
 
-          <button 
+          <button
             style={getButtonStyle("proceed")}
             onClick={proceed}
           >
             Proceed
           </button>
         </div>
-        
+
         <DraftSavePopup
           open={showDraftPopup}
           onClose={() => {
@@ -2498,14 +2499,14 @@ const infoButtonStyle = {
   height: "32px",
   borderRadius: "50%",
   border: "2px solid #0B3A6E",
-    backgroundColor: "#fff",
+  backgroundColor: "#fff",
   color: "#0B3A6E",
   fontSize: "18px",
   fontWeight: "bold",
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
   padding: 0,
   transition: "all 0.2s",
   boxShadow: "0 2px 4px rgba(0,0,0,0.1)",

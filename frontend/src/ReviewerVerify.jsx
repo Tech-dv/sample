@@ -8,6 +8,7 @@ import DraftSavePopup from "./components/DraftSavePopup";
 import MultipleRakeSerialPopup from "./components/MultipleRakeSerialPopup";
 import CancelPopup from "./components/CancelPopup";
 import WarningPopup from "./components/WarningPopup";
+import { idToUrlParam, urlParamToId } from "./utils/trainIdUtils";
 
 
 import {
@@ -64,7 +65,7 @@ function BoxedField({ label, value, onChange, readOnly, isSelect, children }) {
 
 function ReviewerVerify() {
   const { trainId: encodedTrainId } = useParams();
-  const trainId = encodedTrainId ? decodeURIComponent(encodedTrainId) : null;
+  const trainId = encodedTrainId ? urlParamToId(encodedTrainId) : null;
   const [searchParams] = useSearchParams();
   const indentNumber = searchParams.get('indent_number');
   const navigate = useNavigate();
@@ -237,8 +238,8 @@ function ReviewerVerify() {
 
         // Build URL with indent_number query parameter if provided
         const url = indentNumber
-          ? `${API_BASE}/reviewer/train/${encodeURIComponent(trainId)}?indent_number=${encodeURIComponent(indentNumber)}`
-          : `${API_BASE}/reviewer/train/${encodeURIComponent(trainId)}`;
+          ? `${API_BASE}/reviewer/train/${idToUrlParam(trainId)}?indent_number=${encodeURIComponent(indentNumber)}`
+          : `${API_BASE}/reviewer/train/${idToUrlParam(trainId)}`;
 
         const res = await fetch(url, {
           headers: {
@@ -530,7 +531,7 @@ function ReviewerVerify() {
 
     try {
       await fetch(
-        `${API_BASE}/wagon/${encodeURIComponent(trainId)}/${wagon.tower_number}/status`,
+        `${API_BASE}/wagon/${idToUrlParam(trainId)}/${wagon.tower_number}/status`,
         {
           method: "PUT",
           headers: {
@@ -747,7 +748,7 @@ function ReviewerVerify() {
         // ✅ FIX: If wagon was manually toggled to true, preserve that status
         // Otherwise, let backend calculate it based on bag counts
         const isManuallyToggled = manuallyToggledWagons.has(w.tower_number);
-        
+
         // ✅ CRITICAL: Get loaded_bag_count for condition check (needed to determine if we should send loading_status)
         // Even though we don't send bag counts, we need them to check if condition is met
         const loadedBagCount = Number(w.loaded_bag_count) || 0;
@@ -800,7 +801,7 @@ function ReviewerVerify() {
         // ✅ CRITICAL FIX: Always include loading_status when condition is met or manually toggled
         // Calculate if condition is met: loadedBagCount >= wagonToBeLoaded
         const conditionMet = wagonToBeLoaded != null && loadedBagCount >= wagonToBeLoaded;
-        
+
         // Always include loading_status if:
         // 1. Condition is met (loadedBagCount >= wagonToBeLoaded) - send the current status (should be true)
         // 2. Wagon was manually toggled - send the user's explicit choice
@@ -815,7 +816,7 @@ function ReviewerVerify() {
         return wagonPayload;
       });
 
-      const res = await fetch(`${API_BASE}/train/${encodeURIComponent(trainId)}/draft`, {
+      const res = await fetch(`${API_BASE}/train/${idToUrlParam(trainId)}/draft`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -827,7 +828,7 @@ function ReviewerVerify() {
             ...trainHeader,
             // ✅ FIX: Preserve customer_id if it exists, regardless of indent mode
             // Only set to null if it's actually empty/undefined
-            customer_id: trainHeader.customer_id && 
+            customer_id: trainHeader.customer_id &&
               (typeof trainHeader.customer_id === 'string' ? trainHeader.customer_id.trim() !== "" : trainHeader.customer_id)
               ? Number(trainHeader.customer_id)
               : null,
@@ -871,7 +872,7 @@ function ReviewerVerify() {
         return;
       }
     }
-    
+
     // ✅ Check if all wagons for each indent number have wagon numbers filled
     // This validation applies to both parent and child records in multiple indent mode
     if (!editOptions.singleIndent) {
@@ -884,23 +885,23 @@ function ReviewerVerify() {
           // Only check if wagon number is missing
           return wagonNumber === "";
         });
-        
+
         if (hasIncompleteWagons) {
           incompleteIndentNumbers.push(indentNum);
         }
       }
-      
+
       if (incompleteIndentNumbers.length > 0) {
         const indentList = incompleteIndentNumbers.join(", ");
-        setWarning({ 
-          open: true, 
-          message: `Please fill wagon numbers for the following indent number(s): ${indentList}`, 
-          title: "Warning" 
+        setWarning({
+          open: true,
+          message: `Please fill wagon numbers for the following indent number(s): ${indentList}`,
+          title: "Warning"
         });
         return;
       }
     }
-    
+
     const ok = await saveDraft(false);
     if (!ok) return;
 
@@ -909,21 +910,21 @@ function ReviewerVerify() {
       // ✅ FIX: Skip popup for child nodes (when indentNumber is present in URL)
       if (indentNumber) {
         console.log("Child node detected - skipping popup and proceeding directly");
-        navigate(`/reviewer/train/${encodeURIComponent(trainId)}/dispatch${indentNumber ? `?indent_number=${encodeURIComponent(indentNumber)}` : ''}`);
+        navigate(`/reviewer/train/${idToUrlParam(trainId)}/dispatch${indentNumber ? `?indent_number=${encodeURIComponent(indentNumber)}` : ''}`);
         return;
       }
-      
+
       // ✅ FIX: If question has already been answered (Yes or No), skip popup
       if (serialQuestionAnswered) {
         // If answered "Yes" (hasSequentialSerials = true), check for sequential train IDs
         if (hasSequentialSerials) {
           console.log("Train already split into sequential serials, skipping popup");
-          navigate(`/reviewer/train/${encodeURIComponent(trainId)}/dispatch${indentNumber ? `?indent_number=${encodeURIComponent(indentNumber)}` : ''}`);
+          navigate(`/reviewer/train/${idToUrlParam(trainId)}/dispatch${indentNumber ? `?indent_number=${encodeURIComponent(indentNumber)}` : ''}`);
           return;
         } else {
           // Answered "No" - proceed without sequential numbers
           console.log("Multiple rake serial question answered 'No', skipping popup");
-          navigate(`/reviewer/train/${encodeURIComponent(trainId)}/dispatch${indentNumber ? `?indent_number=${encodeURIComponent(indentNumber)}` : ''}`);
+          navigate(`/reviewer/train/${idToUrlParam(trainId)}/dispatch${indentNumber ? `?indent_number=${encodeURIComponent(indentNumber)}` : ''}`);
           return;
         }
       }
@@ -934,7 +935,7 @@ function ReviewerVerify() {
     }
 
     // Single indent mode - proceed normally
-    navigate(`/reviewer/train/${encodeURIComponent(trainId)}/dispatch${indentNumber ? `?indent_number=${encodeURIComponent(indentNumber)}` : ''}`);
+    navigate(`/reviewer/train/${idToUrlParam(trainId)}/dispatch${indentNumber ? `?indent_number=${encodeURIComponent(indentNumber)}` : ''}`);
   };
 
   /* ================= HANDLE MULTIPLE RAKE SERIAL RESPONSES ================= */
@@ -951,7 +952,7 @@ function ReviewerVerify() {
       }
 
       // Call backend to generate sequential serial numbers
-      const res = await fetch(`${API_BASE}/train/${encodeURIComponent(trainId)}/generate-multiple-rake-serial`, {
+      const res = await fetch(`${API_BASE}/train/${idToUrlParam(trainId)}/generate-multiple-rake-serial`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -977,7 +978,7 @@ function ReviewerVerify() {
 
       // Navigate to dispatch page with the first serial number (the one with loading records)
       const firstIndent = indentNumber || null;
-      navigate(`/reviewer/train/${encodeURIComponent(data.firstSerialNumber)}/dispatch${firstIndent ? `?indent_number=${encodeURIComponent(firstIndent)}` : ''}`);
+      navigate(`/reviewer/train/${idToUrlParam(data.firstSerialNumber)}/dispatch${firstIndent ? `?indent_number=${encodeURIComponent(firstIndent)}` : ''}`);
     } catch (err) {
       console.error("Error generating multiple rake serial numbers:", err);
       alert("Failed to generate serial numbers. Please try again.");
@@ -989,7 +990,7 @@ function ReviewerVerify() {
 
     try {
       // Mark that the serial number question has been answered (even though "No" was selected)
-      await fetch(`${API_BASE}/train/${encodeURIComponent(trainId)}/mark-serial-handled`, {
+      await fetch(`${API_BASE}/train/${idToUrlParam(trainId)}/mark-serial-handled`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1007,7 +1008,7 @@ function ReviewerVerify() {
     }
 
     // Use same rake serial number - proceed normally
-    navigate(`/reviewer/train/${encodeURIComponent(trainId)}/dispatch${indentNumber ? `?indent_number=${encodeURIComponent(indentNumber)}` : ''}`);
+    navigate(`/reviewer/train/${idToUrlParam(trainId)}/dispatch${indentNumber ? `?indent_number=${encodeURIComponent(indentNumber)}` : ''}`);
   };
 
   /* ================= CANCEL INDENT HANDLER ================= */
@@ -1530,8 +1531,8 @@ function ReviewerVerify() {
         <CancelPopup
           open={showCancelPopup}
           onClose={() => {
-                    setShowCancelPopup(false);
-                    setCancelRemarks("");
+            setShowCancelPopup(false);
+            setCancelRemarks("");
           }}
           onConfirm={async (remarks) => {
             setCancelRemarks(remarks);

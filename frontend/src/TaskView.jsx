@@ -7,6 +7,7 @@ import SuccessPopup from "./components/SuccessPopup";
 import CancelPopup from "./components/CancelPopup";
 import IconButton from "./components/IconButton";
 import WarningPopup from "./components/WarningPopup";
+import { idToUrlParam } from "./utils/trainIdUtils";
 
 /* ================= MAIN COMPONENT ================= */
 export default function TaskView() {
@@ -59,7 +60,7 @@ export default function TaskView() {
   /* ================= ACTIONS ================= */
   const handleAssign = async (trainId, indentNumber) => {
     try {
-      const res = await fetch(`${API_BASE}/reviewer/tasks/${encodeURIComponent(trainId)}/assign`, {
+      const res = await fetch(`${API_BASE}/reviewer/tasks/${idToUrlParam(trainId)}/assign`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -85,15 +86,15 @@ export default function TaskView() {
   const handleEdit = (trainId, indentNumber) => {
     // Navigate to reviewer edit page (same workflow as dashboard edit)
     const url = indentNumber
-      ? `/reviewer/train/${encodeURIComponent(trainId)}/edit?indent_number=${encodeURIComponent(indentNumber)}`
-      : `/reviewer/train/${encodeURIComponent(trainId)}/edit`;
+      ? `/reviewer/train/${idToUrlParam(trainId)}/edit?indent_number=${encodeURIComponent(indentNumber)}`
+      : `/reviewer/train/${idToUrlParam(trainId)}/edit`;
     navigate(url);
   };
 
   const handleView = (trainId, indentNumber) => {
     const url = indentNumber
-      ? `/view/${encodeURIComponent(trainId)}?indent_number=${encodeURIComponent(indentNumber)}`
-      : `/view/${encodeURIComponent(trainId)}`;
+      ? `/view/${idToUrlParam(trainId)}?indent_number=${encodeURIComponent(indentNumber)}`
+      : `/view/${idToUrlParam(trainId)}`;
     navigate(url);
   };
 
@@ -107,7 +108,7 @@ export default function TaskView() {
 
     try {
       const res = await fetch(
-        `${API_BASE}/reviewer/tasks/${encodeURIComponent(selectedTask.rake_serial_number)}/cancel`,
+        `${API_BASE}/reviewer/tasks/${idToUrlParam(selectedTask.rake_serial_number)}/cancel`,
         {
           method: "POST",
           headers: {

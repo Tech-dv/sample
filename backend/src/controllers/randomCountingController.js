@@ -24,7 +24,7 @@ const getTrains = async (req, res) => {
 
 const getWagons = async (req, res) => {
   const { trainId } = req.params;
-  const decodedTrainId = decodeURIComponent(trainId);
+  const decodedTrainId = trainId.replace(/_/g, "/");
 
   try {
     const result = await pool.query(
@@ -59,8 +59,8 @@ const getWagons = async (req, res) => {
 
 const getLiveCount = async (req, res) => {
   const { train_id, wagon_number } = req.query;
-  const decodedTrainId = train_id ? decodeURIComponent(train_id) : null;
-  const decodedWagonNumber = wagon_number ? decodeURIComponent(wagon_number) : null;
+  const decodedTrainId = train_id ? train_id.replace(/_/g, "/") : null;
+  const decodedWagonNumber = wagon_number ? wagon_number.replace(/_/g, "/") : null;
 
   if (!decodedTrainId || !decodedWagonNumber) {
     return res.status(400).json({ message: "Missing parameters" });

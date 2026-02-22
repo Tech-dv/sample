@@ -7,6 +7,7 @@ import EditOptionsPopup from "./components/EditOptionsPopup";
 import IconButton from "./components/IconButton";
 import WarningPopup from "./components/WarningPopup";
 import Speedometer from "./components/Speedometer";
+import { idToUrlParam } from "./utils/trainIdUtils";
 
 
 const ROWS_PER_PAGE = 5;
@@ -43,7 +44,7 @@ function Dashboard() {
     "SPUR-8": 0,
     "SPUR-9": 0,
   });
-  
+
   /* ================= EDIT POPUP STATE ================= */
   const [showEditPopup, setShowEditPopup] = useState(false);
   const [selectedTrainId, setSelectedTrainId] = useState(null);
@@ -122,21 +123,21 @@ function Dashboard() {
       }
 
       const data = await res.json();
-      
+
       if (data.assignments && data.assignments.length > 0) {
         console.log(`[DASHBOARD] Detected ${data.assignments.length} new sequential train_id assignment(s)`);
-        
+
         // Set refresh flag to trigger dashboard refresh
         localStorage.setItem('dashboardNeedsRefresh', Date.now().toString());
-        
+
         // Dispatch event for immediate refresh if Dashboard is mounted
-        window.dispatchEvent(new CustomEvent('trainIdUpdated', { 
-          detail: { 
+        window.dispatchEvent(new CustomEvent('trainIdUpdated', {
+          detail: {
             updatedTrainIds: data.assignments.reduce((acc, a) => {
               acc[a.indent_number] = a.train_id;
               return acc;
             }, {})
-          } 
+          }
         }));
       }
     } catch (err) {
@@ -154,7 +155,7 @@ function Dashboard() {
         console.log("[DASHBOARD] Refresh flag detected, forcing refresh...");
         localStorage.removeItem('dashboardNeedsRefresh');
       }
-      
+
       const role = localStorage.getItem("role");
       const customerId = localStorage.getItem("customerId");
 
@@ -194,7 +195,7 @@ function Dashboard() {
       console.log("Dashboard data received:", data);
       console.log("Summary:", data.summary);
       console.log("Records count:", data.records?.length || 0);
-      
+
       // Set summary with defaults if not provided
       setSummary(data.summary || {});
       setRecords(data.records || []);
@@ -204,9 +205,9 @@ function Dashboard() {
       console.error("Error:", err);
       console.error("Error message:", err.message);
       console.error("Error stack:", err.stack);
-      
+
       alert(`Failed to load dashboard: ${err.message}\nCheck console for details.`);
-      
+
       // Set empty defaults so the page can still render
       setSummary({});
       setRecords([]);
@@ -235,15 +236,15 @@ function Dashboard() {
     } else {
       fetchDashboardData();
     }
-    
+
     // Fetch alert counts
     fetchAlertCounts();
-    
+
     // Set up polling interval that checks for refresh flag and sequential assignments
     const interval = setInterval(async () => {
       // First check for sequential assignments (triggered by external system)
       await checkSequentialAssignments();
-      
+
       // Then check for refresh flag
       const flag = localStorage.getItem('dashboardNeedsRefresh');
       if (flag) {
@@ -253,19 +254,19 @@ function Dashboard() {
       } else {
         fetchDashboardData();
       }
-      
+
       // Refresh alert counts
       fetchAlertCounts();
     }, 5000);
-    
+
     // Listen for train_id updates from TrainEdit page
     const handleTrainIdUpdate = () => {
       console.log("[DASHBOARD] Train ID updated event received, refreshing...");
       fetchDashboardData();
     };
-    
+
     window.addEventListener('trainIdUpdated', handleTrainIdUpdate);
-    
+
     return () => {
       clearInterval(interval);
       window.removeEventListener('trainIdUpdated', handleTrainIdUpdate);
@@ -295,7 +296,7 @@ function Dashboard() {
       // Bags
       totalBagsLoaded += Number(row.total_bags_loaded || 0);
       totalBagsToBeLoaded += Number(row.total_bags_to_be_loaded || 0);
-      
+
       // Wagons
       totalWagonsLoaded += Number(row.total_wagons_loaded || 0);
       totalWagonsToBeLoaded += Number(row.number_of_indent_wagons || 0);
@@ -326,47 +327,47 @@ function Dashboard() {
     } else {
       statusDisplay = "Rake Loading In Progress";
     }
-    
+
     // Date filter for Rake Loading Start Date & Time
     let startDateMatches = true;
     if (filters.loading_start_date) {
-      const startDate = row.rake_loading_start_datetime 
+      const startDate = row.rake_loading_start_datetime
         ? new Date(row.rake_loading_start_datetime)
         : null;
-      
+
       if (startDate) {
         const filterDate = new Date(filters.loading_start_date);
         filterDate.setHours(0, 0, 0, 0);
         const startDateOnly = new Date(startDate);
         startDateOnly.setHours(0, 0, 0, 0);
-        
+
         startDateMatches = startDateOnly.getTime() === filterDate.getTime();
       } else {
         startDateMatches = false; // If no date, exclude from filtered results
       }
     }
-    
+
     // Date filter for Rake Loading Completion Date & Time
     let completionDateMatches = true;
     if (filters.loading_completion_date) {
-      const completionDate = row.rake_loading_end_actual 
+      const completionDate = row.rake_loading_end_actual
         ? new Date(row.rake_loading_end_actual)
         : null;
-      
+
       if (completionDate) {
         const filterDate = new Date(filters.loading_completion_date);
         filterDate.setHours(0, 0, 0, 0);
         const completionDateOnly = new Date(completionDate);
         completionDateOnly.setHours(0, 0, 0, 0);
-        
+
         completionDateMatches = completionDateOnly.getTime() === filterDate.getTime();
       } else {
         completionDateMatches = false; // If no date, exclude from filtered results
       }
     }
-    
+
     const dateMatches = startDateMatches && completionDateMatches;
-    
+
     return (
       dateMatches &&
       (!filters.train_id ||
@@ -411,7 +412,7 @@ function Dashboard() {
     setFilters({
       train_id: "",
       indent_number: "",
-      customer_name: "", 
+      customer_name: "",
       siding: "",
       wagon_destination: "",
       commodity: "",
@@ -425,33 +426,33 @@ function Dashboard() {
   /* ================= EDIT HANDLERS ================= */
   const handleEditClick = async (trainId, indentNumber = null) => {
     setSelectedTrainId(trainId);
-    
+
     // If indentNumber is provided, it means we're editing a specific indent row
     // In this case, skip popup and go directly to edit
     if (indentNumber) {
-      navigate(`/train/${encodeURIComponent(trainId)}/edit?indent_number=${encodeURIComponent(indentNumber)}`);
+      navigate(`/train/${idToUrlParam(trainId)}/edit?indent_number=${encodeURIComponent(indentNumber)}`);
       return;
     }
-    
+
     // Check if indent_number has been filled OR multiple_indent_confirmed flag is set
     // (indicates user already made their choice)
     try {
-      const res = await fetch(`${API_BASE}/train/${encodeURIComponent(trainId)}/edit`);
-      
+      const res = await fetch(`${API_BASE}/train/${idToUrlParam(trainId)}/edit`);
+
       if (res.ok) {
         const data = await res.json();
-        
+
         // If indent_number is filled OR multiple_indent_confirmed flag is set, user already made their choice - skip popup
         if (data.header.indent_number || data.header.multiple_indent_confirmed) {
           // Navigate without indent_number (will get first available row)
-          navigate(`/train/${encodeURIComponent(trainId)}/edit`);
+          navigate(`/train/${idToUrlParam(trainId)}/edit`);
           return;
         }
       }
     } catch (err) {
       console.error("Error checking train data:", err);
     }
-    
+
     // No indent_number filled and flag not set - show popup
     setShowEditPopup(true);
   };
@@ -465,7 +466,7 @@ function Dashboard() {
       // Fallback (shouldn't happen, but keeps behavior safe)
       localStorage.setItem('editOptions', JSON.stringify(options));
     }
-    navigate(`/train/${encodeURIComponent(selectedTrainId)}/edit`);
+    navigate(`/train/${idToUrlParam(selectedTrainId)}/edit`);
   };
 
 
@@ -505,9 +506,9 @@ function Dashboard() {
                   value={`${summary.spurSummary["SPUR-8"].cameras.active} / ${summary.spurSummary["SPUR-8"].cameras.total}`}
                   onClick={() => navigate("/cameras/SPUR-8")}
                 />
-                <SummaryCard 
-                  title="Active Alerts For Spur 8" 
-                  value={alertCounts["SPUR-8"]} 
+                <SummaryCard
+                  title="Active Alerts For Spur 8"
+                  value={alertCounts["SPUR-8"]}
                 />
               </div>
 
@@ -521,9 +522,9 @@ function Dashboard() {
                   value={`${summary.spurSummary["SPUR-9"].cameras.active} / ${summary.spurSummary["SPUR-9"].cameras.total}`}
                   onClick={() => navigate("/cameras/SPUR-9")}
                 />
-                <SummaryCard 
-                  title="Active Alerts For Spur 9" 
-                  value={alertCounts["SPUR-9"]} 
+                <SummaryCard
+                  title="Active Alerts For Spur 9"
+                  value={alertCounts["SPUR-9"]}
                 />
               </div>
             </>
@@ -710,12 +711,12 @@ function Dashboard() {
                       }
                       style={styles.filterInput}
                     >
-                    <option value="">All</option>
-                    <option value="Rake Loading Completed">Rake Loading Completed</option>
-                    <option value="Rake Loading In Progress">Rake Loading In Progress</option>
-                    {role !== "SUPER_ADMIN" && (
-                    <option value="Cancelled Indent">Cancelled Indent</option>
-                    )}
+                      <option value="">All</option>
+                      <option value="Rake Loading Completed">Rake Loading Completed</option>
+                      <option value="Rake Loading In Progress">Rake Loading In Progress</option>
+                      {role !== "SUPER_ADMIN" && (
+                        <option value="Cancelled Indent">Cancelled Indent</option>
+                      )}
                     </select>
                   </th>
                 )}
@@ -766,8 +767,8 @@ function Dashboard() {
                             label="View"
                             onClick={() => {
                               const url = row.indent_number
-                                ? `/customer/view/${encodeURIComponent(row.train_id)}?indent_number=${encodeURIComponent(row.indent_number)}`
-                                : `/customer/view/${encodeURIComponent(row.train_id)}`;
+                                ? `/customer/view/${idToUrlParam(row.train_id)}?indent_number=${encodeURIComponent(row.indent_number)}`
+                                : `/customer/view/${idToUrlParam(row.train_id)}`;
                               navigate(url);
                             }}
                           />
@@ -797,8 +798,8 @@ function Dashboard() {
                             label="View"
                             onClick={() => {
                               const url = row.indent_number
-                                ? `/view/${encodeURIComponent(row.train_id)}?indent_number=${encodeURIComponent(row.indent_number)}`
-                                : `/view/${encodeURIComponent(row.train_id)}`;
+                                ? `/view/${idToUrlParam(row.train_id)}?indent_number=${encodeURIComponent(row.indent_number)}`
+                                : `/view/${idToUrlParam(row.train_id)}`;
                               navigate(url);
                             }}
                           />
@@ -813,7 +814,7 @@ function Dashboard() {
                               let canEdit = false;
                               // ✅ Only enable edit if bag count has started for at least one wagon
                               const hasBagCountStarted = (row.total_bags_loaded || 0) > 0;
-                              
+
                               if (role === "ADMIN") {
                                 // Admin can edit drafts, rejected, or in-progress
                                 // BUT NOT rows that were revoked by a Super Admin.
@@ -866,29 +867,29 @@ function Dashboard() {
         {/* ================= PAGINATION ================= */}
         {filteredRecords.length > 0 && totalPages > 1 && (
           <div style={styles.paginationWrapper}>
-                <button
-                  disabled={page === 1}
-                  onClick={() => setPage((p) => p - 1)}
+            <button
+              disabled={page === 1}
+              onClick={() => setPage((p) => p - 1)}
               style={{
                 ...styles.paginationArrow,
                 opacity: page === 1 ? 0.3 : 1,
               }}
-                >
+            >
               ◀
-                </button>
+            </button>
 
             <div style={styles.pageInfo}>Page {page}</div>
 
-                <button
-                  disabled={page === totalPages}
-                  onClick={() => setPage((p) => p + 1)}
+            <button
+              disabled={page === totalPages}
+              onClick={() => setPage((p) => p + 1)}
               style={{
                 ...styles.paginationArrow,
                 opacity: page === totalPages ? 0.3 : 1,
               }}
-                >
+            >
               ▶
-                </button>
+            </button>
           </div>
         )}
 
@@ -928,7 +929,7 @@ function SummaryCard({ title, value, onClick }) {
 /* ================= STYLES ================= */
 
 const styles = {
-  mainContent: { 
+  mainContent: {
     padding: "24px",
     backgroundColor: "#ffffffff",
     minHeight: "100vh"
@@ -1038,15 +1039,15 @@ const styles = {
   },
 
   filterRowTd: {
-    padding: "0",               
-    height: "56px",               
+    padding: "0",
+    height: "56px",
     textAlign: "center",
     verticalAlign: "middle",
   },
 
   filterInput: {
     width: "100%",
-    height: "100%",                
+    height: "100%",
     padding: "9px 6px",
     fontSize: "11px",
     outline: "none",
@@ -1073,7 +1074,7 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
     paddingTop: "14px",
-    paddingLeft: "5px",   
+    paddingLeft: "5px",
   },
 
 

@@ -154,7 +154,7 @@ const assignTask = async (req, res) => {
   const reviewerUsername = req.headers["x-reviewer-username"];
 
   try {
-    const decodedTrainId = decodeURIComponent(trainId);
+    const decodedTrainId = trainId.replace(/_/g, "/");
     const rakeSerialNumber = decodedTrainId;
 
     let updateQuery, updateParams;
@@ -197,7 +197,7 @@ const approveTask = async (req, res) => {
   const reviewerUsername = req.headers["x-reviewer-username"];
 
   try {
-    const decodedTrainId = decodeURIComponent(trainId);
+    const decodedTrainId = trainId.replace(/_/g, "/");
     const rakeSerialNumber = decodedTrainId;
     const indentNum = indent_number && indent_number.trim() !== "" ? indent_number.trim() : null;
 
@@ -464,7 +464,7 @@ const cancelTask = async (req, res) => {
   const reviewerUsername = req.headers["x-reviewer-username"];
 
   try {
-    const decodedTrainId = decodeURIComponent(trainId);
+    const decodedTrainId = trainId.replace(/_/g, "/");
     const rakeSerialNumber = decodedTrainId;
 
     let updateQuery, updateParams;
@@ -609,7 +609,7 @@ const getReviewerTrain = async (req, res) => {
   const indentNumber = req.query.indent_number;
 
   try {
-    const decodedTrainId = decodeURIComponent(trainId);
+    const decodedTrainId = trainId.replace(/_/g, "/");
     const rakeSerialNumber = decodedTrainId;
 
     let headerQuery, headerParams;

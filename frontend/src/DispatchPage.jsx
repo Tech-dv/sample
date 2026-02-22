@@ -9,11 +9,12 @@ import { formatActivityText } from "./utils/formatActivityText";
 import DraftSavePopup from "./components/DraftSavePopup";
 import SuccessPopup from "./components/SuccessPopup";
 import WarningPopup from "./components/WarningPopup";
+import { idToUrlParam, urlParamToId } from "./utils/trainIdUtils";
 
 /* ================= MAIN PAGE ================= */
 export default function DispatchPage() {
   const { trainId: encodedTrainId } = useParams();
-  const trainId = encodedTrainId ? decodeURIComponent(encodedTrainId) : null;
+  const trainId = encodedTrainId ? urlParamToId(encodedTrainId) : null;
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const indentNumber = searchParams.get("indent_number"); // Support Case 2: multiple indents with same train_id
@@ -74,13 +75,13 @@ export default function DispatchPage() {
     if (!dateTimeString) return "";
     try {
       const date = new Date(dateTimeString);
-      
+
       // Check if date is valid
       if (isNaN(date.getTime())) {
         console.warn("Invalid date:", dateTimeString);
         return "";
       }
-      
+
       // ✅ Standard Format: YYYY-MM-DDTHH:mm:ss
       // The value is ALWAYS in 24-hour format (hours: 00-23, e.g., 13:30 for 1:30 PM)
       // HTML5 datetime-local input type stores values in ISO 8601 format with 24-hour time
@@ -102,23 +103,23 @@ export default function DispatchPage() {
     if (!dateTimeString) return "-";
     try {
       const date = new Date(dateTimeString);
-      
+
       // Check if date is valid
       if (isNaN(date.getTime())) {
         console.warn("Invalid date:", dateTimeString);
         return "-";
       }
-      
+
       // Get date parts (local timezone)
       const month = date.getMonth() + 1; // 1-12
       const day = date.getDate(); // 1-31
       const year = date.getFullYear();
-      
+
       // Get time parts (24-hour format, local timezone)
       const hours = String(date.getHours()).padStart(2, '0');
       const minutes = String(date.getMinutes()).padStart(2, '0');
       const seconds = String(date.getSeconds()).padStart(2, '0');
-      
+
       // Format: M/D/YYYY, HH:mm:ss (24-hour format, local timezone)
       return `${month}/${day}/${year}, ${hours}:${minutes}:${seconds}`;
     } catch (e) {
@@ -131,17 +132,17 @@ export default function DispatchPage() {
   useEffect(() => {
     setIsLoading(true);
     setLoadError(null);
-    
+
     // Load saved form data first
     const savedData = loadSavedData(autoSaveKey);
     // ✅ FIX: Load saved autoData if available
     const savedAutoData = loadSavedData(autoDataKey);
-    
+
     // Build URL with indent_number if present (Case 2: multiple indents with same train_id)
-    const fetchUrl = indentNumber 
-      ? `${API_BASE}/train/${encodeURIComponent(trainId)}/dispatch?indent_number=${encodeURIComponent(indentNumber)}`
-      : `${API_BASE}/train/${encodeURIComponent(trainId)}/dispatch`;
-    
+    const fetchUrl = indentNumber
+      ? `${API_BASE}/train/${idToUrlParam(trainId)}/dispatch?indent_number=${encodeURIComponent(indentNumber)}`
+      : `${API_BASE}/train/${idToUrlParam(trainId)}/dispatch`;
+
     fetch(fetchUrl)
       .then((r) => {
         if (!r.ok) {
@@ -151,7 +152,7 @@ export default function DispatchPage() {
       })
       .then((d) => {
         console.log("=== Dispatch data received ===", d);
-        
+
         try {
           console.log("Step 1: Setting siding and rake serial number");
           setSiding(d.siding || "");
@@ -161,36 +162,36 @@ export default function DispatchPage() {
 
           if (d.dispatch) {
             console.log("Step 2: Dispatch object exists", d.dispatch);
-            
+
             console.log("Step 3: Formatting dates");
             const placementDate = formatDateTimeLocal(d.dispatch.rake_placement_datetime);
             console.log("Placement date formatted:", placementDate);
             const clearanceDate = formatDateTimeLocal(d.dispatch.rake_clearance_datetime);
             console.log("Clearance date formatted:", clearanceDate);
-            
+
             // Only load rake_loading_end_railway if dispatch has been submitted or has other user-entered data
             // This ensures it's only loaded if the user has actually worked on the form before
-            const hasUserData = d.dispatch.status === 'SUBMITTED' || 
-                               d.dispatch.rake_placement_datetime || 
-                               d.dispatch.rake_clearance_datetime ||
-                               d.dispatch.rake_type ||
-                               d.dispatch.indent_wagon_count ||
-                               d.dispatch.loading_start_officer ||
-                               d.dispatch.loading_completion_officer ||
-                               d.dispatch.remarks;
-            
-            const rakeLoadingEndRailwayDate = hasUserData 
+            const hasUserData = d.dispatch.status === 'SUBMITTED' ||
+              d.dispatch.rake_placement_datetime ||
+              d.dispatch.rake_clearance_datetime ||
+              d.dispatch.rake_type ||
+              d.dispatch.indent_wagon_count ||
+              d.dispatch.loading_start_officer ||
+              d.dispatch.loading_completion_officer ||
+              d.dispatch.remarks;
+
+            const rakeLoadingEndRailwayDate = hasUserData
               ? formatDateTimeLocal(d.dispatch.rake_loading_end_railway)
               : ""; // Empty if no user data exists (first time visit)
-            
+
             // ✅ Load door_closing_datetime and rake_haul_out_datetime into form (now user-editable)
             // Declare these BEFORE they're used in the form object
             const doorClosingDate = formatDateTimeLocal(d.dispatch.door_closing_datetime);
             const rakeHaulOutDate = formatDateTimeLocal(d.dispatch.rake_haul_out_datetime);
-            
+
             console.log("Rake Loading End Railway date formatted:", rakeLoadingEndRailwayDate);
             console.log("Has user data (should load railway):", hasUserData);
-            
+
             console.log("Step 4: Creating form object");
             const f = {
               indent_wagon_count: String(d.dispatch.indent_wagon_count ?? ""),
@@ -209,13 +210,13 @@ export default function DispatchPage() {
             };
 
             console.log("Step 5: Form data created:", f);
-            
+
             // Merge saved data with API data (saved data takes priority for user input)
             // But only if the saved data has actual meaningful content (not just empty fields)
-            const hasMeaningfulSavedData = savedData && 
-              Object.keys(savedData).length > 0 && 
+            const hasMeaningfulSavedData = savedData &&
+              Object.keys(savedData).length > 0 &&
               Object.values(savedData).some(val => val && val.trim && val.trim() !== "");
-            
+
             if (hasMeaningfulSavedData) {
               console.log("Found saved data from previous session, merging with API data");
               const mergedForm = { ...f, ...savedData };
@@ -226,7 +227,7 @@ export default function DispatchPage() {
               console.log("Using fresh data from database");
               setForm(f);
               setOriginalForm(f);
-              
+
               // Clear any stale autosave data
               if (savedData) {
                 console.log("Clearing stale autosave data");
@@ -244,7 +245,7 @@ export default function DispatchPage() {
               rake_loading_start_datetime: d.dispatch.rake_loading_start_datetime || "", // Try dispatch first
               rake_loading_end_actual: "", // ✅ FIX: Always start empty - will be calculated from wagons
             };
-            
+
             // ✅ FIX: Merge with saved autoData from localStorage if available
             if (savedAutoData) {
               console.log("Found saved autoData from localStorage, merging");
@@ -255,14 +256,14 @@ export default function DispatchPage() {
               // ✅ FIX: Don't preserve rake_loading_end_actual from localStorage - it will be recalculated from wagons
               // to ensure it only shows when ALL wagons have loading_end_time filled
             }
-            
+
             console.log("Step 8: Auto data created (times from dispatch or will be fetched from wagons):", autoDataObj);
             setAutoData(autoDataObj);
             console.log("Step 9: Set auto data");
           } else {
             console.log("No dispatch data found, showing empty form");
           }
-          
+
           console.log("Step 10: Setting loading to false");
           setIsLoading(false);
           console.log("=== Loading complete ===");
@@ -282,10 +283,10 @@ export default function DispatchPage() {
     // Fetch activity timeline
     const fetchActivityTimeline = async () => {
       try {
-        const timelineUrl = indentNumber 
-          ? `${API_BASE}/train/${encodeURIComponent(trainId)}/activity-timeline?indent_number=${encodeURIComponent(indentNumber)}`
-          : `${API_BASE}/train/${encodeURIComponent(trainId)}/activity-timeline`;
-        
+        const timelineUrl = indentNumber
+          ? `${API_BASE}/train/${idToUrlParam(trainId)}/activity-timeline?indent_number=${encodeURIComponent(indentNumber)}`
+          : `${API_BASE}/train/${idToUrlParam(trainId)}/activity-timeline`;
+
         const response = await fetch(timelineUrl, {
           headers: {
             "x-user-role": role,
@@ -295,18 +296,18 @@ export default function DispatchPage() {
         if (response.ok) {
           const data = await response.json();
           setActivities(data.activities || []);
-          
+
           // Check if status is APPROVED and if there are reviewer edits
           const allActivities = (data.activities || []).flatMap(group => group.activities || []);
-          const hasApproval = allActivities.some(act => 
-            act.activity_type === 'DISPATCH_APPROVED' || 
+          const hasApproval = allActivities.some(act =>
+            act.activity_type === 'DISPATCH_APPROVED' ||
             act.text?.toLowerCase().includes('approved by reviewer') ||
             act.text?.toLowerCase().includes('submitted and approved')
           );
-          const hasReviewerEdits = allActivities.some(act => 
+          const hasReviewerEdits = allActivities.some(act =>
             act.activity_type === 'REVIEWER_TRAIN_EDITED' && act.changeDetails
           );
-          
+
           setIsApproved(hasApproval);
           setHasReviewerEdits(hasReviewerEdits);
         }
@@ -319,10 +320,10 @@ export default function DispatchPage() {
     const fetchWagonData = async () => {
       try {
         console.log("Fetching wagon data to calculate rake loading times");
-        const wagonUrl = indentNumber 
-          ? `${API_BASE}/train/${encodeURIComponent(trainId)}/view?indent_number=${encodeURIComponent(indentNumber)}`
-          : `${API_BASE}/train/${encodeURIComponent(trainId)}/view`;
-        
+        const wagonUrl = indentNumber
+          ? `${API_BASE}/train/${idToUrlParam(trainId)}/view?indent_number=${encodeURIComponent(indentNumber)}`
+          : `${API_BASE}/train/${idToUrlParam(trainId)}/view`;
+
         const response = await fetch(wagonUrl, {
           headers: {
             "x-user-role": "ADMIN",
@@ -332,7 +333,7 @@ export default function DispatchPage() {
         if (response.ok) {
           const data = await response.json();
           const wagons = data.wagons || [];
-          
+
           if (wagons.length > 0) {
             // ✅ FIX: Sort wagons by tower_number (ascending)
             const sortedWagons = [...wagons].sort((a, b) => {
@@ -340,11 +341,11 @@ export default function DispatchPage() {
               const towerB = b.tower_number || 0;
               return towerA - towerB;
             });
-            
+
             // ✅ FIX: Get first wagon's loading_start_time (ordered by tower_number)
             const firstWagon = sortedWagons.find(w => w.loading_start_time);
             const rakeLoadingStart = firstWagon ? firstWagon.loading_start_time : "";
-            
+
             // ✅ FIX: Only get last wagon's loading_end_time if ALL wagons have loading_end_time filled
             const totalWagons = sortedWagons.length;
             // ✅ FIX: More robust check - ensure loading_end_time exists, is not null/undefined, and is not empty
@@ -352,7 +353,7 @@ export default function DispatchPage() {
               const endTime = w.loading_end_time;
               return endTime != null && String(endTime).trim() !== "";
             }).length;
-            
+
             let rakeLoadingEnd = "";
             // ✅ FIX: Only set if ALL wagons have loading_end_time AND we have wagons
             if (totalWagons > 0 && wagonsWithEndTime === totalWagons) {
@@ -363,12 +364,12 @@ export default function DispatchPage() {
               }
             }
             // If not all wagons have loading_end_time, keep rakeLoadingEnd as empty string
-            
+
             // ✅ FIX: Update autoData with fetched values from wagons
             // Prefer fetched values from wagons (most accurate), but don't overwrite if previous has value and fetched is empty
             setAutoData(prev => {
               const newData = {
-              ...prev,
+                ...prev,
                 // Use fetched value if available, otherwise keep previous value (which might be from dispatch_records)
                 rake_loading_start_datetime: rakeLoadingStart || prev.rake_loading_start_datetime || "",
                 // ✅ FIX: Only set rake_loading_end_actual if ALL wagons have loading_end_time filled
@@ -376,11 +377,11 @@ export default function DispatchPage() {
                 // This ensures the field is always recalculated from current wagon data, never preserved from previous state
                 rake_loading_end_actual: (wagonsWithEndTime === totalWagons && rakeLoadingEnd && rakeLoadingEnd.trim() !== "") ? rakeLoadingEnd : "",
               };
-            
+
               console.log("Updating autoData with wagon times:", {
                 fetchedFromWagons: {
-              rake_loading_start_datetime: rakeLoadingStart,
-              rake_loading_end_actual: rakeLoadingEnd,
+                  rake_loading_start_datetime: rakeLoadingStart,
+                  rake_loading_end_actual: rakeLoadingEnd,
                 },
                 previousState: {
                   rake_loading_start_datetime: prev.rake_loading_start_datetime,
@@ -393,7 +394,7 @@ export default function DispatchPage() {
                 wagonsWithEndTime: wagonsWithEndTime,
                 allWagonsHaveEndTime: wagonsWithEndTime === totalWagons
               });
-              
+
               return newData;
             });
           } else {
@@ -474,7 +475,7 @@ export default function DispatchPage() {
   /* ================= FORMAT FILENAME FROM RAKE SERIAL NUMBER ================= */
   const formatRakeSerialFilename = (rakeSerial) => {
     if (!rakeSerial) return `${trainId}_changes.xlsx`;
-    
+
     // Parse rake_serial_number format: "2025-26/02/001"
     // Expected output: "2025-26_feb_001_changes.xlsx"
     const parts = rakeSerial.split('/');
@@ -482,18 +483,18 @@ export default function DispatchPage() {
       const yearPart = parts[0]; // "2025-26"
       const monthNum = parts[1]; // "02"
       const serialPart = parts[2]; // "001"
-      
+
       // Convert month number to short month name
-      const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 
-                          'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+      const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun',
+        'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
       const monthIndex = parseInt(monthNum, 10) - 1;
-      const monthShort = (monthIndex >= 0 && monthIndex < 12) 
-        ? monthNames[monthIndex] 
+      const monthShort = (monthIndex >= 0 && monthIndex < 12)
+        ? monthNames[monthIndex]
         : monthNum.toLowerCase();
-      
+
       return `${yearPart}_${monthShort}_${serialPart}_changes.xlsx`;
     }
-    
+
     // Fallback to original format if parsing fails
     return `${rakeSerial}_changes.xlsx`;
   };
@@ -587,7 +588,7 @@ export default function DispatchPage() {
       headerRow.forEach((header, index) => {
         const normalizedHeader = normalizeKey(header);
         const fieldName = headerMap[normalizedHeader];
-        
+
         if (fieldName && dataRow[index] !== undefined && dataRow[index] !== null) {
           const value = String(dataRow[index]).trim();
           if (value !== "") {
@@ -605,7 +606,7 @@ export default function DispatchPage() {
       // Update form with imported data
       setForm(formData);
       setOriginalForm(formData);
-      
+
       setWarning({ open: true, message: `Successfully imported ${foundFields} field(s) from Excel file.`, title: "Success" });
     } catch (err) {
       console.error("Failed to import Excel", err);
@@ -619,74 +620,74 @@ export default function DispatchPage() {
   /* ================= VALIDATION ================= */
   const getMissingFields = () => {
     const missing = [];
-    
+
     // Order: First wagon details, then fields in order of columns on rake details page
-    
+
     // 1. Wagon details (from Wagon Edit page) - FIRST
     if (!wagonDetailsComplete) {
       missing.push("Wagon details (from Wagon Edit page)");
     }
-    
+
     // 2. Number of Indent Wagons
     if (!form.indent_wagon_count || form.indent_wagon_count.trim() === "" || indentError) {
       missing.push("Number of Indent Wagons");
     }
-    
+
     // 3. Type Of Rake
     if (!form.rake_type || form.rake_type.trim() === "") {
       missing.push("Type Of Rake");
     }
-    
+
     // 4. Rake Placement Date & Time
     if (!form.rake_placement_datetime || form.rake_placement_datetime.trim() === "") {
       missing.push("Rake Placement Date & Time");
     }
-    
+
     // 5. Rake Clearance Time
     if (!form.rake_clearance_datetime || form.rake_clearance_datetime.trim() === "") {
       missing.push("Rake Clearance Time");
     }
-    
+
     // 6. Rake Idle time
     if (!form.rake_idle_time || form.rake_idle_time.trim() === "") {
       missing.push("Rake Idle time");
     }
-    
+
     // 7. Rake Loading Start Date & Time (auto-populated, but check if missing)
     if (!autoData.rake_loading_start_datetime || autoData.rake_loading_start_datetime.trim() === "") {
       missing.push("Rake Loading Start Date & Time");
     }
-    
+
     // 8. Rake Loading End Date & Time Actual (auto-populated, but check if missing)
     if (!autoData.rake_loading_end_actual || autoData.rake_loading_end_actual.trim() === "") {
       missing.push("Rake Loading End Date & Time Actual");
     }
-    
+
     // 9. Rake Loading End Date & Time Railway
     if (!form.rake_loading_end_railway || form.rake_loading_end_railway.trim() === "") {
       missing.push("Rake Loading End Date & Time Railway");
     }
-    
+
     // 10. Door Closing Date & Time
     if (!form.door_closing_datetime || form.door_closing_datetime.trim() === "") {
       missing.push("Door Closing Date & Time");
     }
-    
+
     // 11. Loading Start Officer
     if (!form.loading_start_officer || form.loading_start_officer.trim() === "") {
       missing.push("Loading Start Officer");
     }
-    
+
     // 12. Loading Completion Officer
     if (!form.loading_completion_officer || form.loading_completion_officer.trim() === "") {
       missing.push("Loading Completion Officer");
     }
-    
+
     // 13. Remarks(Operations)
     if (!form.remarks || form.remarks.trim() === "") {
       missing.push("Remarks(Operations)");
     }
-    
+
     return missing;
   };
 
@@ -716,7 +717,7 @@ export default function DispatchPage() {
       form.door_closing_datetime &&
       form.door_closing_datetime.trim() !== ""
     );
-    
+
     // Submit is only enabled if both dispatch fields AND wagon details are complete
     return dispatchFieldsComplete && wagonDetailsComplete;
   };
@@ -736,15 +737,15 @@ export default function DispatchPage() {
     // These fields are calculated from wagon_records by the backend and should NEVER be updated by frontend saves
     // Only send user-editable fields
     const dataToSave = { ...data };
-    
+
     // Explicitly exclude auto-populated fields
     delete dataToSave.rake_loading_start_datetime;
     delete dataToSave.rake_loading_end_actual;
 
     // Build URL with indent_number if present (Case 2: multiple indents with same train_id)
-    const draftUrl = indentNumber 
-      ? `${API_BASE}/train/${encodeURIComponent(trainId)}/dispatch/draft?indent_number=${encodeURIComponent(indentNumber)}`
-      : `${API_BASE}/train/${encodeURIComponent(trainId)}/dispatch/draft`;
+    const draftUrl = indentNumber
+      ? `${API_BASE}/train/${idToUrlParam(trainId)}/dispatch/draft?indent_number=${encodeURIComponent(indentNumber)}`
+      : `${API_BASE}/train/${idToUrlParam(trainId)}/dispatch/draft`;
 
     try {
       const res = await fetch(
@@ -763,9 +764,9 @@ export default function DispatchPage() {
         setOriginalForm({ ...originalForm, ...data });
         // ✅ FIX: Clear autoData localStorage after successful save since it's now in the database
         clearSavedData(autoDataKey);
-        
+
         // ✅ Also clear door_closing_datetime and rake_haul_out_datetime from autoData (they're now in form)
-        
+
         // Show popup if showAlert is true
         if (showAlert) {
           setShowDraftPopup(true);
@@ -787,26 +788,26 @@ export default function DispatchPage() {
       setWarning({ open: true, message: "Please fill all required fields before submitting.", title: "Warning" });
       return;
     }
-    
+
     // Automatically save draft before submitting
     const saveSuccess = await saveDraft(false); // Don't show alert for auto-save
     if (!saveSuccess) {
       setWarning({ open: true, message: "Failed to save changes. Please try again.", title: "Error" });
       return;
     }
-    
+
     // Build URL with indent_number if present (Case 2: multiple indents with same train_id)
-    const submitUrl = indentNumber 
-      ? `${API_BASE}/train/${encodeURIComponent(trainId)}/dispatch/submit?indent_number=${encodeURIComponent(indentNumber)}`
-      : `${API_BASE}/train/${encodeURIComponent(trainId)}/dispatch/submit`;
-    
+    const submitUrl = indentNumber
+      ? `${API_BASE}/train/${idToUrlParam(trainId)}/dispatch/submit?indent_number=${encodeURIComponent(indentNumber)}`
+      : `${API_BASE}/train/${idToUrlParam(trainId)}/dispatch/submit`;
+
     try {
       const username = localStorage.getItem("username");
       const r = await fetch(
         submitUrl,
-        { 
-          method: "POST", 
-          headers: { 
+        {
+          method: "POST",
+          headers: {
             "x-user-role": role,
             "Content-Type": "application/json"
           },
@@ -823,25 +824,25 @@ export default function DispatchPage() {
           })
         }
       );
-      
+
       if (r.ok) {
         // Clear auto-saved data on successful submit
         clearSavedData(autoSaveKey);
         // ✅ FIX: Also clear autoData localStorage
         clearSavedData(autoDataKey);
-        
+
         // Refresh activity timeline after submission
-        const timelineUrl = indentNumber 
-          ? `${API_BASE}/train/${encodeURIComponent(trainId)}/activity-timeline?indent_number=${encodeURIComponent(indentNumber)}`
-          : `${API_BASE}/train/${encodeURIComponent(trainId)}/activity-timeline`;
-        
+        const timelineUrl = indentNumber
+          ? `${API_BASE}/train/${idToUrlParam(trainId)}/activity-timeline?indent_number=${encodeURIComponent(indentNumber)}`
+          : `${API_BASE}/train/${idToUrlParam(trainId)}/activity-timeline`;
+
         fetch(timelineUrl, {
           headers: { "x-user-role": "ADMIN" },
         })
           .then(res => res.json())
           .then(data => setActivities(data.activities || []))
           .catch(err => console.error("Failed to refresh activity timeline:", err));
-        
+
         setShowSuccess(true);
       } else {
         const errorData = await r.json().catch(() => ({ message: "Submit failed" }));
@@ -929,67 +930,67 @@ export default function DispatchPage() {
                 Upload Excel
               </label>
             </div>
-        <div style={pdf.grid}>
-          <Field label="Source" value="KSLK" readOnly />
-          <Field label="Rake Serial Number" value={rakeSerialNumber || trainId} readOnly />
-          <Field label="Siding" value={siding} readOnly />
-
-          <Field
-            label="Number of Indent Wagons"
-            value={form.indent_wagon_count}
-            onChange={handleIndentWagonChange}
-            required
-            error={indentError}
-          />
-
-          <Field label="Vessel Name" value={form.vessel_name}
-            onChange={(v) => setForm({ ...form, vessel_name: v })} />
+            <div style={pdf.grid}>
+              <Field label="Source" value="KSLK" readOnly />
+              <Field label="Rake Serial Number" value={rakeSerialNumber || trainId} readOnly />
+              <Field label="Siding" value={siding} readOnly />
 
               <Field
-            label="Type Of Rake"
-            value={form.rake_type}
-            onChange={(v) => setForm({ ...form, rake_type: v })}
-            required
-            selectOptions={[
-              { value: "", label: "Select" },
-              ...rakeTypes,
-            ]}
-          />
+                label="Number of Indent Wagons"
+                value={form.indent_wagon_count}
+                onChange={handleIndentWagonChange}
+                required
+                error={indentError}
+              />
 
-          <Field type="datetime-local" label="Rake Placement Date & Time"
-            value={form.rake_placement_datetime}
-            onChange={(v) => setForm({ ...form, rake_placement_datetime: v })} 
-            required />
+              <Field label="Vessel Name" value={form.vessel_name}
+                onChange={(v) => setForm({ ...form, vessel_name: v })} />
 
-              <Field type="datetime-local" label="Rake Clearance Time"
-            value={form.rake_clearance_datetime}
-            onChange={(v) => setForm({ ...form, rake_clearance_datetime: v })} 
-            required />
+              <Field
+                label="Type Of Rake"
+                value={form.rake_type}
+                onChange={(v) => setForm({ ...form, rake_type: v })}
+                required
+                selectOptions={[
+                  { value: "", label: "Select" },
+                  ...rakeTypes,
+                ]}
+              />
 
-              <Field label="Rake Idle time" value={form.rake_idle_time}
-            onChange={(v) => setForm({ ...form, rake_idle_time: v })} 
-            required />
-
-          <Field label="Rake Loading Start Date & Time" value={formatDateTime(autoData.rake_loading_start_datetime)} readOnly />
-              <Field label="Rake Loading End Date & Time Actual" value={formatDateTime(autoData.rake_loading_end_actual)} readOnly />
-              <Field type="datetime-local" label="Rake Loading End Date & Time Railway" 
-                value={form.rake_loading_end_railway}
-                onChange={(v) => setForm({ ...form, rake_loading_end_railway: v })} 
+              <Field type="datetime-local" label="Rake Placement Date & Time"
+                value={form.rake_placement_datetime}
+                onChange={(v) => setForm({ ...form, rake_placement_datetime: v })}
                 required />
 
-          <Field 
-            type="datetime-local" 
-            label="Door Closing Date & Time" 
-            value={form.door_closing_datetime}
-            onChange={(v) => setForm({ ...form, door_closing_datetime: v })}
-            required 
-          />
-          <Field 
-            type="datetime-local" 
-            label="Rake Haul Out Date & Time" 
-            value={form.rake_haul_out_datetime}
-            onChange={(v) => setForm({ ...form, rake_haul_out_datetime: v })}
-          />
+              <Field type="datetime-local" label="Rake Clearance Time"
+                value={form.rake_clearance_datetime}
+                onChange={(v) => setForm({ ...form, rake_clearance_datetime: v })}
+                required />
+
+              <Field label="Rake Idle time" value={form.rake_idle_time}
+                onChange={(v) => setForm({ ...form, rake_idle_time: v })}
+                required />
+
+              <Field label="Rake Loading Start Date & Time" value={formatDateTime(autoData.rake_loading_start_datetime)} readOnly />
+              <Field label="Rake Loading End Date & Time Actual" value={formatDateTime(autoData.rake_loading_end_actual)} readOnly />
+              <Field type="datetime-local" label="Rake Loading End Date & Time Railway"
+                value={form.rake_loading_end_railway}
+                onChange={(v) => setForm({ ...form, rake_loading_end_railway: v })}
+                required />
+
+              <Field
+                type="datetime-local"
+                label="Door Closing Date & Time"
+                value={form.door_closing_datetime}
+                onChange={(v) => setForm({ ...form, door_closing_datetime: v })}
+                required
+              />
+              <Field
+                type="datetime-local"
+                label="Rake Haul Out Date & Time"
+                value={form.rake_haul_out_datetime}
+                onChange={(v) => setForm({ ...form, rake_haul_out_datetime: v })}
+              />
             </div>
           </div>
 
@@ -1022,55 +1023,55 @@ export default function DispatchPage() {
                   </div>
                 </div>
               )}
-              
+
               {/* Download button - only show after reviewer submits (APPROVED) and has reviewer edits */}
               {isApproved && hasReviewerEdits && (
                 <div style={{ padding: "16px", borderTop: "1px solid #eee", backgroundColor: "#f9f9f9" }}>
                   <button
                     onClick={async () => {
-                            try {
-                              const role = localStorage.getItem("role");
-                        const url = `${API_BASE}/train/${encodeURIComponent(trainId)}/export-all-reviewer-changes`;
-                              
-                              const response = await fetch(url, {
-                                headers: {
-                                  "x-user-role": role || "ADMIN",
-                                },
-                              });
+                      try {
+                        const role = localStorage.getItem("role");
+                        const url = `${API_BASE}/train/${idToUrlParam(trainId)}/export-all-reviewer-changes`;
 
-                              if (!response.ok) {
-                                const errorData = await response.json().catch(() => ({ message: "Download failed" }));
-                                setWarning({ open: true, message: errorData.message || "Failed to download Excel file", title: "Error" });
-                                return;
-                              }
+                        const response = await fetch(url, {
+                          headers: {
+                            "x-user-role": role || "ADMIN",
+                          },
+                        });
 
-                              // Get the blob from response
-                              const blob = await response.blob();
-                              
+                        if (!response.ok) {
+                          const errorData = await response.json().catch(() => ({ message: "Download failed" }));
+                          setWarning({ open: true, message: errorData.message || "Failed to download Excel file", title: "Error" });
+                          return;
+                        }
+
+                        // Get the blob from response
+                        const blob = await response.blob();
+
                         // Format filename from rake_serial_number
                         // Format: {year-part}_{month-short}_{serial-part}_changes.xlsx
                         // Example: "2025-26/02/001" -> "2025-26_feb_001_changes.xlsx"
                         const filename = formatRakeSerialFilename(rakeSerialNumber || trainId);
-                              
-                              // Create a temporary URL for the blob
-                              const blobUrl = window.URL.createObjectURL(blob);
-                              
-                              // Create a temporary anchor element and trigger download
-                              const link = document.createElement('a');
-                              link.href = blobUrl;
-                              link.download = filename;
-                              document.body.appendChild(link);
-                              link.click();
-                              
-                              // Clean up
-                              document.body.removeChild(link);
-                              window.URL.revokeObjectURL(blobUrl);
-                            } catch (err) {
-                              console.error("Download error:", err);
-                              setWarning({ open: true, message: "Failed to download Excel file. Please try again.", title: "Error" });
-                            }
+
+                        // Create a temporary URL for the blob
+                        const blobUrl = window.URL.createObjectURL(blob);
+
+                        // Create a temporary anchor element and trigger download
+                        const link = document.createElement('a');
+                        link.href = blobUrl;
+                        link.download = filename;
+                        document.body.appendChild(link);
+                        link.click();
+
+                        // Clean up
+                        document.body.removeChild(link);
+                        window.URL.revokeObjectURL(blobUrl);
+                      } catch (err) {
+                        console.error("Download error:", err);
+                        setWarning({ open: true, message: "Failed to download Excel file. Please try again.", title: "Error" });
+                      }
                     }}
-                                  style={{
+                    style={{
                       width: "100%",
                       padding: "10px 16px",
                       backgroundColor: "#4CAF50",
@@ -1081,12 +1082,12 @@ export default function DispatchPage() {
                       fontSize: "14px",
                       fontWeight: "600",
                       transition: "background-color 0.2s",
-                                  }}
+                    }}
                     onMouseOver={(e) => e.target.style.backgroundColor = "#45a049"}
                     onMouseOut={(e) => e.target.style.backgroundColor = "#4CAF50"}
-                                >
+                  >
                     Download All Reviewer Changes (Excel)
-                                </button>
+                  </button>
                 </div>
               )}
             </div>
@@ -1096,15 +1097,15 @@ export default function DispatchPage() {
         {/* Bottom: Last row with 4 columns */}
         <div style={pdf.lastRow}>
           <Field label="Loading Start Officer" value={form.loading_start_officer}
-            onChange={(v) => setForm({ ...form, loading_start_officer: v })} 
+            onChange={(v) => setForm({ ...form, loading_start_officer: v })}
             required />
 
           <Field label="Loading Completion Officer" value={form.loading_completion_officer}
-            onChange={(v) => setForm({ ...form, loading_completion_officer: v })} 
+            onChange={(v) => setForm({ ...form, loading_completion_officer: v })}
             required />
 
           <Field label="Remarks(Operations)" value={form.remarks}
-            onChange={(v) => setForm({ ...form, remarks: v })} 
+            onChange={(v) => setForm({ ...form, remarks: v })}
             required />
 
           <Field label="RR Number" value={form.rr_number}
@@ -1113,17 +1114,17 @@ export default function DispatchPage() {
 
         {/* Footer Buttons */}
         <div style={pdf.footer}>
-        <button
-        style={getButtonStyle("back")}
+          <button
+            style={getButtonStyle("back")}
             onClick={() => {
               const editUrl = indentNumber
-                ? `/train/${encodeURIComponent(trainId)}/edit?indent_number=${encodeURIComponent(indentNumber)}`
-                : `/train/${encodeURIComponent(trainId)}/edit`;
+                ? `/train/${idToUrlParam(trainId)}/edit?indent_number=${encodeURIComponent(indentNumber)}`
+                : `/train/${idToUrlParam(trainId)}/edit`;
               navigate(editUrl);
             }}
-        >
-        Back
-        </button>
+          >
+            Back
+          </button>
           <button style={pdf.cancelButton} onClick={() => navigate("/dashboard")}>
             Cancel
           </button>
@@ -1131,17 +1132,17 @@ export default function DispatchPage() {
             Save
           </button>
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <button 
-            style={{
-              ...pdf.submitButton,
-              ...(isFormComplete() ? {} : pdf.submitButtonDisabled)
-            }}
-            onClick={submit}
-            disabled={!isFormComplete()}
-          >
-            Submit
-          </button>
-            
+            <button
+              style={{
+                ...pdf.submitButton,
+                ...(isFormComplete() ? {} : pdf.submitButtonDisabled)
+              }}
+              onClick={submit}
+              disabled={!isFormComplete()}
+            >
+              Submit
+            </button>
+
             {/* Info button - show when form is not complete */}
             {!isFormComplete() && (
               <button
@@ -1212,7 +1213,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
   // Parse the datetime value (ISO string or datetime-local format) into date and time parts
   const parseDateTime = (dtValue) => {
     if (!dtValue) return { date: "", dateDisplay: "", time: "" };
-    
+
     let dateObj;
     // Check if it's an ISO string or datetime-local format
     if (dtValue.includes("T")) {
@@ -1229,7 +1230,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
     } else {
       return { date: "", dateDisplay: "", time: "" };
     }
-    
+
     // Convert Date object to date and time parts
     const year = dateObj.getFullYear();
     const month = String(dateObj.getMonth() + 1).padStart(2, '0');
@@ -1237,11 +1238,11 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
     const hours = String(dateObj.getHours()).padStart(2, '0');
     const minutes = String(dateObj.getMinutes()).padStart(2, '0');
     const seconds = String(dateObj.getSeconds()).padStart(2, '0');
-    
+
     // Format: YYYY-MM-DD for storage, DD/MM/YYYY for display
     const dateStorage = `${year}-${month}-${day}`;
     const dateDisplay = `${day}/${month}/${year}`;
-    
+
     return {
       date: dateStorage,
       dateDisplay: dateDisplay,
@@ -1303,7 +1304,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
     setLocalDate(dateDisplay || "dd/mm/yyyy");
     // Initialize with "HH:MM:SS" if no time value exists
     setLocalTime(time || "HH:MM:SS");
-    
+
     // Initialize calendar date and time picker values
     if (value) {
       const dateObj = new Date(value);
@@ -1327,8 +1328,8 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (calendarRef.current && !calendarRef.current.contains(event.target) &&
-          dateInputRef.current && !dateInputRef.current.contains(event.target) &&
-          timeInputRef.current && !timeInputRef.current.contains(event.target)) {
+        dateInputRef.current && !dateInputRef.current.contains(event.target) &&
+        timeInputRef.current && !timeInputRef.current.contains(event.target)) {
         setShowCalendar(false);
       }
     };
@@ -1344,7 +1345,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
   const handleDateChange = (e) => {
     // This handler is mainly for paste operations and manual editing
     let newDate = e.target.value;
-    
+
     // If user is typing and field shows placeholder, convert it
     if (newDate.includes('d') || newDate.includes('m') || newDate.includes('y')) {
       // User is trying to type over placeholder, convert to numeric format
@@ -1353,34 +1354,34 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         newDate = "00/00/0000";
       }
     }
-    
+
     // Remove any non-digit and slash characters
     newDate = newDate.replace(/[^\d/]/g, '');
-    
+
     // If empty after cleaning, use placeholder
     if (!newDate || newDate.trim() === "") {
       setLocalDate("dd/mm/yyyy");
       return; // Don't update value if it's just placeholder
     }
-    
+
     // Ensure format is DD/MM/YYYY
     const parts = newDate.split('/');
     let day = (parts[0] || '00').padStart(2, '0').substring(0, 2);
     let month = (parts[1] || '00').padStart(2, '0').substring(0, 2);
     let year = (parts[2] || '0000').padStart(4, '0').substring(0, 4);
-    
+
     // Validate ranges
     const dayNum = parseInt(day) || 0;
     const monthNum = parseInt(month) || 0;
     const yearNum = parseInt(year) || 0;
-    
+
     if (dayNum > 31) day = '31';
     if (monthNum > 12) month = '12';
     if (yearNum > 9999) year = '9999';
-    
+
     const formattedDate = `${day}/${month}/${year}`;
     setLocalDate(formattedDate);
-    
+
     // Convert to YYYY-MM-DD for storage
     const dateStorage = convertToYYYYMMDD(formattedDate);
     const currentTime = localTime === "HH:MM:SS" ? "00:00:00" : (localTime || time || "00:00:00");
@@ -1391,36 +1392,36 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
   const handleDateKeyDown = (e) => {
     const input = e.target;
     let currentDate = localDate || "dd/mm/yyyy";
-    
+
     // Convert placeholder to numeric format when user starts typing
     if (currentDate === "dd/mm/yyyy") {
       currentDate = "00/00/0000"; // Use numeric format for processing
       setLocalDate("00/00/0000"); // Update display immediately
     }
-    
+
     // Ensure format is always DD/MM/YYYY
     if (!currentDate.includes('/')) {
       currentDate = "00/00/0000"; // Use numeric format for processing
     }
-    
+
     const parts = currentDate.split('/');
     let day = (parts[0] || '00').padStart(2, '0');
     let month = (parts[1] || '00').padStart(2, '0');
     let year = (parts[2] || '0000').padStart(4, '0');
-    
+
     // Determine current position (0-9: D D / M M / Y Y Y Y)
     // Position: 0,1 = day, 3,4 = month, 6,7,8,9 = year
     let currentPosition = input.selectionStart;
-    
+
     // Adjust position if cursor is on a slash
     if (currentPosition === 2 || currentPosition === 5) {
       currentPosition = currentPosition + 1;
     }
-    
+
     // Handle number key press - replace digit at current position
     if (e.key >= '0' && e.key <= '9') {
       e.preventDefault();
-      
+
       // If still showing placeholder, convert to numeric format
       if (currentDate === "dd/mm/yyyy") {
         currentDate = "00/00/0000";
@@ -1431,20 +1432,20 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         year = (parts[2] || '0000').padStart(4, '0');
         currentPosition = 0; // Reset position to start
       }
-      
+
       let newDay = day;
       let newMonth = month;
       let newYear = year;
       let nextPosition = currentPosition + 1;
       let shouldMoveToTime = false;
-      
+
       if (currentPosition < 2) {
         // Replacing day digits
         const dayPos = currentPosition;
         const newDayStr = day.split('');
         newDayStr[dayPos] = e.key;
         const newDayNum = parseInt(newDayStr.join('')) || 0;
-        
+
         // Validate: first digit can be 0-3, second digit depends on first
         if (dayPos === 0) {
           // First digit of day
@@ -1457,16 +1458,16 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
           const firstDigit = parseInt(day[0]) || 0;
           if (firstDigit === 3 && parseInt(e.key) > 1) {
             return;
-        }
+          }
           newDay = day[0] + e.key;
-    }
-    
+        }
+
         // Validate final day value
         const finalDay = parseInt(newDay) || 0;
         if (finalDay > 31) {
           newDay = '31';
         }
-        
+
         // Auto-advance to month after second digit
         if (dayPos === 1) {
           nextPosition = 3; // Move to first month digit
@@ -1477,7 +1478,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         const newMonthStr = month.split('');
         newMonthStr[monthPos] = e.key;
         const newMonthNum = parseInt(newMonthStr.join('')) || 0;
-        
+
         // Validate: first digit can be 0-1, second digit depends on first
         if (monthPos === 0) {
           // First digit of month
@@ -1492,14 +1493,14 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
             return;
           }
           newMonth = month[0] + e.key;
-    }
-    
+        }
+
         // Validate final month value
         const finalMonth = parseInt(newMonth) || 0;
         if (finalMonth > 12) {
           newMonth = '12';
         }
-        
+
         // Auto-advance to year after second digit
         if (monthPos === 1) {
           nextPosition = 6; // Move to first year digit
@@ -1510,23 +1511,23 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         const newYearStr = year.split('');
         newYearStr[yearPos] = e.key;
         newYear = newYearStr.join('');
-        
+
         // Auto-advance to time after fourth digit
         if (yearPos === 3) {
           shouldMoveToTime = true;
         }
       }
-      
+
       // Update date with new values
       const formattedDate = `${newDay}/${newMonth}/${newYear}`;
       setLocalDate(formattedDate);
-      
+
       // Convert to YYYY-MM-DD for storage
       const dateStorage = convertToYYYYMMDD(formattedDate);
       const currentTime = localTime === "HH:MM:SS" ? "00:00:00" : (localTime || time || "00:00:00");
       const newValue = combineDateTime(dateStorage, currentTime);
       onChange && onChange(newValue);
-      
+
       // Move cursor to next position or move to time input
       if (shouldMoveToTime) {
         setTimeout(() => {
@@ -1540,19 +1541,19 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
           input.setSelectionRange(nextPosition, nextPosition);
         }, 0);
       }
-      
+
       return;
     }
-    
+
     // Handle backspace - remove digit and move cursor back
     if (e.key === 'Backspace') {
       e.preventDefault();
-      
+
       let newDay = day;
       let newMonth = month;
       let newYear = year;
       let nextPosition = currentPosition;
-      
+
       if (currentPosition < 2) {
         // In day field
         if (currentPosition === 1) {
@@ -1593,23 +1594,23 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
           nextPosition = 4; // Move to second month digit
         }
       }
-      
+
       const formattedDate = `${newDay}/${newMonth}/${newYear}`;
       setLocalDate(formattedDate);
-    
+
       // Convert to YYYY-MM-DD for storage
       const dateStorage = convertToYYYYMMDD(formattedDate);
       const currentTime = localTime === "HH:MM:SS" ? "00:00:00" : (localTime || time || "00:00:00");
       const newValue = combineDateTime(dateStorage, currentTime);
       onChange && onChange(newValue);
-      
-    setTimeout(() => {
+
+      setTimeout(() => {
         input.setSelectionRange(nextPosition, nextPosition);
       }, 0);
-      
+
       return;
     }
-    
+
     // Handle arrow keys for navigation
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       setTimeout(() => {
@@ -1617,8 +1618,8 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         if (newPos === 2 || newPos === 5) {
           const direction = e.key === 'ArrowLeft' ? -1 : 1;
           input.setSelectionRange(newPos + direction, newPos + direction);
-    }
-    }, 0);
+        }
+      }, 0);
     }
   };
 
@@ -1635,12 +1636,12 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
       setLocalDate(dateDisplayToday);
       setSelectedDate(today); // Also update selectedDate for calendar
       setCalendarDate(today); // Also update calendarDate for calendar
-      
+
       // Update the combined value immediately
       const currentTime = localTime === "HH:MM:SS" ? "00:00:00" : (localTime || time || "00:00:00");
       const newValue = combineDateTime(dateStorage, currentTime);
       onChange && onChange(newValue);
-      
+
       setTimeout(() => {
         e.target.setSelectionRange(0, 0); // Position cursor at start
       }, 0);
@@ -1661,13 +1662,13 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         setLocalDate(dateDisplayToday);
         setSelectedDate(today); // Also update selectedDate for calendar
         setCalendarDate(today); // Also update calendarDate for calendar
-        
+
         // Update the combined value immediately
         const currentTime = localTime === "HH:MM:SS" ? "00:00:00" : (localTime || time || "00:00:00");
         const newValue = combineDateTime(dateStorage, currentTime);
         onChange && onChange(newValue);
       }
-      
+
       setShowCalendar(true);
       // Initialize calendar with current value or today
       if (value) {
@@ -1680,7 +1681,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
           setPickerHours(String(parseInt(timeParts[0] || 0) || 0).padStart(2, '0'));
           setPickerMinutes(String(parseInt(timeParts[1] || 0) || 0).padStart(2, '0'));
           setPickerSeconds(String(parseInt(timeParts[2] || 0) || 0).padStart(2, '0'));
-      } else {
+        } else {
           const today = new Date();
           setCalendarDate(today);
           setSelectedDate(today);
@@ -1716,7 +1717,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
     // Add empty cells for days before the first day of the month
     for (let i = 0; i < firstDay; i++) {
       days.push(null);
-      }
+    }
 
     // Add days of the month
     for (let day = 1; day <= daysInMonth; day++) {
@@ -1744,19 +1745,19 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
 
   const handleDateSelect = (day) => {
     if (day === null) return;
-    
+
     const newDate = new Date(calendarDate.getFullYear(), calendarDate.getMonth(), day);
     setSelectedDate(newDate);
-    
+
     // Update the date part
     const year = newDate.getFullYear();
     const month = String(newDate.getMonth() + 1).padStart(2, '0');
     const dayStr = String(newDate.getDate()).padStart(2, '0');
     const dateStorage = `${year}-${month}-${dayStr}`;
     const dateDisplay = `${dayStr}/${month}/${year}`;
-    
+
     setLocalDate(dateDisplay);
-    
+
     // Combine with current time
     const currentTime = localTime === "HH:MM:SS" ? "00:00:00" : (localTime || time || "00:00:00");
     const newValue = combineDateTime(dateStorage, currentTime);
@@ -1767,24 +1768,24 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
     const input = e.target;
     let currentValue = type === 'hours' ? pickerHours : type === 'minutes' ? pickerMinutes : pickerSeconds;
     const cursorPos = input.selectionStart || 0;
-    
+
     // Ensure format is always 2 digits
     if (!currentValue || currentValue.length !== 2) {
       currentValue = "00";
     }
-    
+
     // Handle number key press - replace digit at current position
     if (e.key >= '0' && e.key <= '9') {
       e.preventDefault();
-      
+
       let newValue = currentValue.split('');
       let nextPosition = cursorPos + 1;
       let shouldMoveToNext = false;
-      
+
       if (cursorPos < 2) {
         // Replace digit at cursor position
         newValue[cursorPos] = e.key;
-        
+
         // Validate based on type and position
         if (type === 'hours') {
           if (cursorPos === 0 && parseInt(e.key) > 2) {
@@ -1805,10 +1806,10 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
             shouldMoveToNext = true; // Move to next field after second digit
           }
         }
-        
+
         const updatedValue = newValue.join('');
         const numValue = parseInt(updatedValue) || 0;
-        
+
         // Validate ranges
         if (type === 'hours' && numValue > 23) {
           return;
@@ -1816,7 +1817,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         if ((type === 'minutes' || type === 'seconds') && numValue > 59) {
           return;
         }
-        
+
         // Update state
         if (type === 'hours') {
           setPickerHours(updatedValue);
@@ -1824,23 +1825,23 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
           setPickerMinutes(updatedValue);
         } else if (type === 'seconds') {
           setPickerSeconds(updatedValue);
-      }
-        
+        }
+
         // Update time immediately
         const hours = type === 'hours' ? updatedValue : pickerHours;
         const minutes = type === 'minutes' ? updatedValue : pickerMinutes;
         const seconds = type === 'seconds' ? updatedValue : pickerSeconds;
         const timeStr = `${hours}:${minutes}:${seconds}`;
         setLocalTime(timeStr);
-        
+
         if (selectedDate || date) {
-          const dateStorage = selectedDate 
+          const dateStorage = selectedDate
             ? `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')}`
             : date;
           const newValue = combineDateTime(dateStorage, timeStr);
           onChange && onChange(newValue);
         }
-        
+
         // Move cursor or focus next field
         if (shouldMoveToNext) {
           setTimeout(() => {
@@ -1852,7 +1853,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
               secondsInputRef.current.setSelectionRange(0, 0);
             }
           }, 0);
-    } else {
+        } else {
           setTimeout(() => {
             input.setSelectionRange(nextPosition, nextPosition);
           }, 0);
@@ -1860,14 +1861,14 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
       }
       return;
     }
-    
+
     // Handle backspace - remove digit and move cursor back
     if (e.key === 'Backspace') {
       e.preventDefault();
-      
+
       let newValue = currentValue.split('');
       let nextPosition = cursorPos;
-      
+
       if (cursorPos === 1) {
         // At second digit - clear it and move to first
         newValue[1] = '0';
@@ -1876,10 +1877,10 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         // At first digit - clear it (stay at position 0)
         newValue[0] = '0';
         nextPosition = 0;
-    }
-    
+      }
+
       const updatedValue = newValue.join('');
-      
+
       // Update state
       if (type === 'hours') {
         setPickerHours(updatedValue);
@@ -1888,29 +1889,29 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
       } else if (type === 'seconds') {
         setPickerSeconds(updatedValue);
       }
-      
+
       // Update time immediately
       const hours = type === 'hours' ? updatedValue : pickerHours;
       const minutes = type === 'minutes' ? updatedValue : pickerMinutes;
       const seconds = type === 'seconds' ? updatedValue : pickerSeconds;
       const timeStr = `${hours}:${minutes}:${seconds}`;
       setLocalTime(timeStr);
-      
+
       if (selectedDate || date) {
-        const dateStorage = selectedDate 
+        const dateStorage = selectedDate
           ? `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')}`
           : date;
         const newValue = combineDateTime(dateStorage, timeStr);
         onChange && onChange(newValue);
       }
-      
-    setTimeout(() => {
+
+      setTimeout(() => {
         input.setSelectionRange(nextPosition, nextPosition);
       }, 0);
-      
+
       return;
     }
-    
+
     // Handle arrow keys for navigation
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       // Allow default behavior
@@ -1928,7 +1929,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         minutesInputRef.current.setSelectionRange(0, 2);
       } else if (type === 'seconds' && secondsInputRef.current) {
         secondsInputRef.current.setSelectionRange(0, 2);
-    }
+      }
     }, 0);
   };
 
@@ -1939,13 +1940,13 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
       const day = String(selectedDate.getDate()).padStart(2, '0');
       const dateStorage = `${year}-${month}-${day}`;
       const dateDisplay = `${day}/${month}/${year}`;
-      
+
       setLocalDate(dateDisplay);
-      
+
       // pickerHours, pickerMinutes, pickerSeconds are already strings in "00" format
       const timeStr = `${pickerHours}:${pickerMinutes}:${pickerSeconds}`;
       setLocalTime(timeStr);
-      
+
       const newValue = combineDateTime(dateStorage, timeStr);
       onChange && onChange(newValue);
     }
@@ -1958,22 +1959,22 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
 
   const handleDateBlur = (e) => {
     let newDate = localDate || "";
-    
+
     // Validate and format date on blur
     if (newDate && newDate.trim() !== "") {
       const parts = newDate.split('/');
       let day = parseInt(parts[0] || 0) || 0;
       let month = parseInt(parts[1] || 0) || 0;
       let year = parseInt(parts[2] || 0) || 0;
-      
+
       // Clamp values to valid ranges
       day = Math.min(31, Math.max(1, day));
       month = Math.min(12, Math.max(1, month));
       year = Math.min(9999, Math.max(1900, year));
-      
+
       const formattedDate = `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${String(year).padStart(4, '0')}`;
       setLocalDate(formattedDate);
-      
+
       // Convert to YYYY-MM-DD for storage
       const dateStorage = convertToYYYYMMDD(formattedDate);
       const currentTime = localTime === "HH:MM:SS" ? "00:00:00" : (localTime || time || "00:00:00");
@@ -1990,7 +1991,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
     // This handler is mainly for paste operations and manual editing
     // The actual digit-by-digit replacement is handled in handleTimeKeyDown
     let newTime = e.target.value;
-    
+
     // If user is typing and field shows placeholder, convert it
     if (newTime.includes('H') || newTime.includes('M') || newTime.includes('S')) {
       // User is trying to type over placeholder, convert to numeric format
@@ -1999,72 +2000,72 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         newTime = "00:00:00";
       }
     }
-    
+
     // Remove any non-digit and colon characters
     newTime = newTime.replace(/[^\d:]/g, '');
-    
+
     // If empty after cleaning, use placeholder
     if (!newTime || newTime.trim() === "") {
       setLocalTime("HH:MM:SS");
       return; // Don't update value if it's just placeholder
     }
-    
+
     // Ensure format is HH:mm:ss
     const parts = newTime.split(':');
     let hours = (parts[0] || '00').padStart(2, '0').substring(0, 2);
     let minutes = (parts[1] || '00').padStart(2, '0').substring(0, 2);
     let seconds = (parts[2] || '00').padStart(2, '0').substring(0, 2);
-    
+
     // Validate ranges
     const hourNum = parseInt(hours) || 0;
     const minNum = parseInt(minutes) || 0;
     const secNum = parseInt(seconds) || 0;
-    
+
     if (hourNum > 23) hours = '23';
     if (minNum > 59) minutes = '59';
     if (secNum > 59) seconds = '59';
-    
+
     const formattedTime = `${hours}:${minutes}:${seconds}`;
     setLocalTime(formattedTime);
-    
+
     // Update the combined datetime value
     if (date) {
       const newValue = combineDateTime(date, formattedTime);
       onChange && onChange(newValue);
     }
   };
-  
+
   const handleTimeKeyDown = (e) => {
     const input = e.target;
     let currentTime = localTime || "HH:MM:SS";
     const cursorPos = input.selectionStart;
-    
+
     // Convert placeholder to numeric format when user starts typing
     if (currentTime === "HH:MM:SS") {
       currentTime = "00:00:00"; // Use numeric format for processing
       setLocalTime("00:00:00"); // Update display immediately
     }
-    
+
     // Ensure format is always HH:mm:ss
     if (!currentTime.includes(':')) {
       currentTime = "00:00:00"; // Use numeric format for processing
     }
-    
+
     const parts = currentTime.split(':');
     let hours = (parts[0] || '00').padStart(2, '0');
     let minutes = (parts[1] || '00').padStart(2, '0');
     let seconds = (parts[2] || '00').padStart(2, '0');
-    
+
     // Determine current position (0-7: H H : M M : S S)
     // Position: 0,1 = hours, 3,4 = minutes, 6,7 = seconds
     let currentPosition = cursorPos;
-    
+
     // Adjust position if cursor is on a colon
     if (cursorPos === 2 || cursorPos === 5) {
       // Cursor is on a colon, move to next digit
       currentPosition = cursorPos + 1;
     }
-    
+
     // Handle number key press - replace digit at current position
     if (e.key >= '0' && e.key <= '9') {
       // ✅ FIX: If date is empty, "dd/mm/yyyy" or "00/00/0000", set it to today's date before processing time input
@@ -2078,7 +2079,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         const dateDisplayToday = `${day}/${month}/${year}`;
         setLocalDate(dateDisplayToday);
       }
-      
+
       // If still showing placeholder, convert to numeric format
       if (currentTime === "HH:MM:SS") {
         currentTime = "00:00:00";
@@ -2089,45 +2090,45 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         seconds = (parts[2] || '00').padStart(2, '0');
         currentPosition = 0; // Reset position to start
       }
-      
-          e.preventDefault();
-      
+
+      e.preventDefault();
+
       let newHours = hours;
       let newMinutes = minutes;
       let newSeconds = seconds;
       let nextPosition = currentPosition + 1;
-      
+
       if (currentPosition < 2) {
         // Replacing hours digits
         const hourPos = currentPosition;
         const newHourStr = hours.split('');
         newHourStr[hourPos] = e.key;
         const newHour = parseInt(newHourStr.join('')) || 0;
-        
+
         // Validate: first digit can be 0-2, second digit depends on first
         if (hourPos === 0) {
           // First digit of hours
           if (parseInt(e.key) > 2) {
             // Invalid, don't update
-          return;
-        }
+            return;
+          }
           newHours = e.key + hours[1];
         } else if (hourPos === 1) {
           // Second digit of hours
           const firstDigit = parseInt(hours[0]) || 0;
           if (firstDigit === 2 && parseInt(e.key) > 3) {
             // Can't be > 23
-          return;
-        }
+            return;
+          }
           newHours = hours[0] + e.key;
         }
-        
+
         // Validate final hour value
         const finalHour = parseInt(newHours) || 0;
         if (finalHour > 23) {
           newHours = '23';
         }
-        
+
         // Auto-advance to minutes after second digit
         if (hourPos === 1) {
           nextPosition = 3; // Move to first minute digit
@@ -2138,26 +2139,26 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         const newMinStr = minutes.split('');
         newMinStr[minPos] = e.key;
         const newMin = parseInt(newMinStr.join('')) || 0;
-        
+
         // Validate: first digit can be 0-5, second digit 0-9
         if (minPos === 0) {
           // First digit of minutes
           if (parseInt(e.key) > 5) {
             // Invalid, don't update
-          return;
-        }
+            return;
+          }
           newMinutes = e.key + minutes[1];
         } else if (minPos === 1) {
           // Second digit of minutes
           newMinutes = minutes[0] + e.key;
-    }
-    
+        }
+
         // Validate final minute value
         const finalMin = parseInt(newMinutes) || 0;
         if (finalMin > 59) {
           newMinutes = '59';
         }
-        
+
         // Auto-advance to seconds after second digit
         if (minPos === 1) {
           nextPosition = 6; // Move to first second digit
@@ -2168,7 +2169,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         const newSecStr = seconds.split('');
         newSecStr[secPos] = e.key;
         const newSec = parseInt(newSecStr.join('')) || 0;
-        
+
         // Validate: first digit can be 0-5, second digit 0-9
         if (secPos === 0) {
           // First digit of seconds
@@ -2181,23 +2182,23 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
           // Second digit of seconds
           newSeconds = seconds[0] + e.key;
         }
-        
+
         // Validate final second value
         const finalSec = parseInt(newSeconds) || 0;
         if (finalSec > 59) {
           newSeconds = '59';
         }
-        
+
         // Stay in seconds field after second digit
         if (secPos === 1) {
           nextPosition = 8; // End of input
         }
       }
-      
+
       // Update time with new values
       const formattedTime = `${newHours}:${newMinutes}:${newSeconds}`;
       setLocalTime(formattedTime);
-      
+
       // Update the combined datetime value
       // ✅ FIX: Use the updated date (may have been set to today's date above)
       const currentDateForCombine = localDate || dateDisplay || "";
@@ -2213,15 +2214,15 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         const newValue = combineDateTime(dateForCombine, formattedTime);
         onChange && onChange(newValue);
       }
-      
+
       // Move cursor to next position
-        setTimeout(() => {
+      setTimeout(() => {
         input.setSelectionRange(nextPosition, nextPosition);
-        }, 0);
-      
+      }, 0);
+
       return;
     }
-    
+
     // Handle arrow keys for navigation
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       // Allow default behavior but adjust if on colon
@@ -2234,16 +2235,16 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         }
       }, 0);
     }
-    
+
     // Handle backspace - remove digit and move cursor back
     if (e.key === 'Backspace') {
-        e.preventDefault();
-      
+      e.preventDefault();
+
       let newHours = hours;
       let newMinutes = minutes;
       let newSeconds = seconds;
       let nextPosition = currentPosition;
-      
+
       if (currentPosition < 2) {
         // In hours field
         if (currentPosition === 1) {
@@ -2290,10 +2291,10 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
           nextPosition = 4; // Move to second minute digit
         }
       }
-      
+
       const formattedTime = `${newHours}:${newMinutes}:${newSeconds}`;
       setLocalTime(formattedTime);
-      
+
       // Update the combined datetime value
       // ✅ FIX: Use the updated date (may have been set to today's date above)
       const currentDateForCombine = localDate || dateDisplay || "";
@@ -2309,23 +2310,23 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         const newValue = combineDateTime(dateForCombine, formattedTime);
         onChange && onChange(newValue);
       }
-      
+
       // Move cursor to previous position
-        setTimeout(() => {
+      setTimeout(() => {
         input.setSelectionRange(nextPosition, nextPosition);
-        }, 0);
-      
+      }, 0);
+
       return;
     }
-    
+
     // Handle delete - remove digit at current position (forward delete)
     if (e.key === 'Delete') {
       e.preventDefault();
-      
+
       let newHours = hours;
       let newMinutes = minutes;
       let newSeconds = seconds;
-      
+
       if (currentPosition < 2) {
         // In hours field
         const hourPos = currentPosition === 0 ? 0 : 1;
@@ -2345,10 +2346,10 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         newSecStr[secPos] = '0';
         newSeconds = newSecStr.join('');
       }
-      
+
       const formattedTime = `${newHours}:${newMinutes}:${newSeconds}`;
       setLocalTime(formattedTime);
-      
+
       // Update the combined datetime value
       // ✅ FIX: Use the updated date (may have been set to today's date above)
       const currentDateForCombine = localDate || dateDisplay || "";
@@ -2364,7 +2365,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
         const newValue = combineDateTime(dateForCombine, formattedTime);
         onChange && onChange(newValue);
       }
-      
+
       return;
     }
   };
@@ -2385,7 +2386,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
       const newValue = combineDateTime(dateStorage, currentTime);
       onChange && onChange(newValue);
     }
-    
+
     // Ensure format is "HH:MM:SS" when focused if empty or invalid (display format)
     const currentTime = localTime || time || "";
     if (!currentTime || !currentTime.includes(':') || currentTime.split(':').length !== 3 || currentTime === "HH:MM:SS") {
@@ -2393,38 +2394,38 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
       setTimeout(() => {
         e.target.setSelectionRange(0, 0); // Position cursor at start
       }, 0);
-      }
-    };
+    }
+  };
 
   const handleTimeBlur = (e) => {
     let newTime = localTime || time || "";
-    
+
     // Validate and format time on blur
     if (newTime && newTime.trim() !== "") {
       const parts = newTime.split(':');
       let hours = parseInt(parts[0] || 0) || 0;
       let minutes = parseInt(parts[1] || 0) || 0;
       let seconds = parseInt(parts[2] || 0) || 0;
-      
+
       // Clamp values to valid ranges
       hours = Math.min(23, Math.max(0, hours));
       minutes = Math.min(59, Math.max(0, minutes));
       seconds = Math.min(59, Math.max(0, seconds));
-      
+
       const formattedTime = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
       setLocalTime(formattedTime);
-      
+
       // Update the combined value
       if (date) {
         const newValue = combineDateTime(date, formattedTime);
         onChange && onChange(newValue);
       }
-      } else {
+    } else {
       // If empty, set to "HH:MM:SS" (display format)
       setLocalTime("HH:MM:SS");
       // Don't update the value if it's just a placeholder
-      }
-    };
+    }
+  };
 
   // Format datetime for display (read-only mode)
   const formatDisplay = (dtValue) => {
@@ -2432,14 +2433,14 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
     try {
       const date = new Date(dtValue);
       if (isNaN(date.getTime())) return "-";
-      
+
       const month = date.getMonth() + 1;
       const day = date.getDate();
       const year = date.getFullYear();
       const hours = String(date.getHours()).padStart(2, '0');
       const minutes = String(date.getMinutes()).padStart(2, '0');
       const seconds = String(date.getSeconds()).padStart(2, '0');
-      
+
       return `${month}/${day}/${year}, ${hours}:${minutes}:${seconds}`;
     } catch (e) {
       return "-";
@@ -2481,50 +2482,50 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
       </legend>
       <div style={{ display: "flex", gap: "4px", alignItems: "center", position: "relative" }}>
         <input
-            type="text"
-            ref={dateInputRef}
-            value={localDate || "dd/mm/yyyy"}
+          type="text"
+          ref={dateInputRef}
+          value={localDate || "dd/mm/yyyy"}
           readOnly={readOnly}
           onChange={handleDateChange}
-            onFocus={handleDateFocus}
-            onBlur={handleDateBlur}
-            onKeyDown={handleDateKeyDown}
-            onClick={handleDateInputClick}
-            placeholder="dd/mm/yyyy"
+          onFocus={handleDateFocus}
+          onBlur={handleDateBlur}
+          onKeyDown={handleDateKeyDown}
+          onClick={handleDateInputClick}
+          placeholder="dd/mm/yyyy"
           style={{
             ...field.input,
             background: readOnly ? "#f4f4f4" : "white",
             flex: "1",
-              minWidth: "140px",
+            minWidth: "140px",
+            textAlign: "center",
+            cursor: readOnly ? "default" : "pointer",
+          }}
+          pattern="\d{2}/\d{2}/\d{4}"
+          title="Enter date in DD/MM/YYYY format. Click to open calendar or type digits to replace: dd/mm/yyyy"
+        />
+        <div style={{ position: "relative", flex: "1", display: "flex", alignItems: "center" }}>
+          <input
+            type="text"
+            ref={timeInputRef}
+            value={localTime || "HH:MM:SS"}
+            readOnly={readOnly}
+            onChange={handleTimeChange}
+            onFocus={handleTimeFocus}
+            onBlur={handleTimeBlur}
+            onKeyDown={handleTimeKeyDown}
+            onClick={() => !readOnly && setShowCalendar(true)}
+            placeholder="HH:MM:SS"
+            style={{
+              ...field.input,
+              background: readOnly ? "#f4f4f4" : "white",
+              flex: "1",
+              minWidth: "120px",
               textAlign: "center",
               cursor: readOnly ? "default" : "pointer",
             }}
-            pattern="\d{2}/\d{2}/\d{4}"
-            title="Enter date in DD/MM/YYYY format. Click to open calendar or type digits to replace: dd/mm/yyyy"
-        />
-        <div style={{ position: "relative", flex: "1", display: "flex", alignItems: "center" }}>
-            <input
-          type="text"
-          ref={timeInputRef}
-          value={localTime || "HH:MM:SS"}
-          readOnly={readOnly}
-          onChange={handleTimeChange}
-          onFocus={handleTimeFocus}
-          onBlur={handleTimeBlur}
-          onKeyDown={handleTimeKeyDown}
-          onClick={() => !readOnly && setShowCalendar(true)}
-          placeholder="HH:MM:SS"
-              style={{
-                ...field.input,
-            background: readOnly ? "#f4f4f4" : "white",
-            flex: "1",
-            minWidth: "120px",
-            textAlign: "center",
-            cursor: readOnly ? "default" : "pointer",
-              }}
-          pattern="([0-1][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]"
-          title="Enter time in 24-hour format (HH:mm:ss). Click to open calendar or type digits to replace: HH:MM:SS"
-        />
+            pattern="([0-1][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]"
+            title="Enter time in 24-hour format (HH:mm:ss). Click to open calendar or type digits to replace: HH:MM:SS"
+          />
           {!readOnly && (
             <span
               onClick={handleDateInputClick}
@@ -2541,7 +2542,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
             </span>
           )}
         </div>
-        
+
         {/* Calendar Popup */}
         {showCalendar && !readOnly && (
           <div
@@ -2641,9 +2642,9 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
                       selectedDate.getDate() === day &&
                       selectedDate.getMonth() === calendarDate.getMonth() &&
                       selectedDate.getFullYear() === calendarDate.getFullYear();
-                    const isToday = day !== null && new Date().toDateString() === 
+                    const isToday = day !== null && new Date().toDateString() ===
                       new Date(calendarDate.getFullYear(), calendarDate.getMonth(), day).toDateString();
-                    
+
                     return (
                       <button
                         key={index}
@@ -2730,7 +2731,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
                         background: "white",
                       }}
                       title="Type digits to replace: 00 (0-59)"
-        />
+                    />
                   </div>
                   <span style={{ fontSize: "20px", fontWeight: "600", color: "#333" }}>:</span>
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
@@ -2802,7 +2803,7 @@ function Field({ label, value, onChange, readOnly, type = "text", required = fal
       />
     );
   }
-  
+
   const isSelect = Array.isArray(selectOptions) && selectOptions.length > 0 && !readOnly;
 
   return (

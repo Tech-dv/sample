@@ -119,7 +119,7 @@ const createTrain = async (req, res) => {
 const viewTrain = async (req, res) => {
   const { trainId } = req.params;
   // trainId may be URL encoded (e.g., "2025-26%2F01%2F001"), decode it
-  const decodedTrainId = decodeURIComponent(trainId);
+  const decodedTrainId = trainId.replace(/_/g, "/");
   const role = req.headers["x-user-role"];
   const customerId = req.customerId;
 
@@ -305,7 +305,7 @@ const viewTrain = async (req, res) => {
 const editTrain = async (req, res) => {
   const { trainId } = req.params;
   // trainId may be URL encoded (e.g., "2025-26%2F01%2F001"), decode it
-  const decodedTrainId = decodeURIComponent(trainId);
+  const decodedTrainId = trainId.replace(/_/g, "/");
   const indentNumber = req.query.indent_number; // Optional: filter by indent
 
   try {
@@ -470,7 +470,7 @@ const saveDraft = async (req, res) => {
   // ✅ FIX: Resolve rakeSerialNumber FIRST before fetching existing data for comparison
   // ✅ FIX: URL trainId is now always rake_serial_number
   // No need to resolve - use it directly
-  const decodedTrainId = decodeURIComponent(trainId);
+  const decodedTrainId = trainId.replace(/_/g, "/");
   const rakeSerialNumber = decodedTrainId; // URL parameter is rake_serial_number
   console.log(`[DRAFT SAVE] Using rake_serial_number: ${rakeSerialNumber}`);
 
@@ -1800,7 +1800,7 @@ const saveDraft = async (req, res) => {
 const getDispatch = async (req, res) => {
   const { trainId } = req.params;
   // trainId may be URL encoded (e.g., "2025-26%2F02%2F001"), decode it
-  const decodedTrainId = decodeURIComponent(trainId);
+  const decodedTrainId = trainId.replace(/_/g, "/");
   const indentNumber = req.query.indent_number; // Support Case 2: multiple indents with same train_id
 
   try {
@@ -2032,7 +2032,7 @@ const getDispatch = async (req, res) => {
 const saveDispatchDraft = async (req, res) => {
   const { trainId } = req.params;
   // trainId may be URL encoded (e.g., "2025-26%2F02%2F001"), decode it
-  const decodedTrainId = decodeURIComponent(trainId);
+  const decodedTrainId = trainId.replace(/_/g, "/");
   // ✅ FIX: Normalize indent_number (treat null, undefined, and empty string consistently)
   const rawIndentNumber = req.query.indent_number || (req.body && req.body.indent_number) || null;
   const indentNumber = rawIndentNumber && rawIndentNumber.trim() !== "" ? rawIndentNumber.trim() : null;
@@ -2427,7 +2427,7 @@ const saveDispatchDraft = async (req, res) => {
 const submitDispatch = async (req, res) => {
   const { trainId } = req.params;
   // trainId may be URL encoded (e.g., "2025-26%2F02%2F001"), decode it
-  const decodedTrainId = decodeURIComponent(trainId);
+  const decodedTrainId = trainId.replace(/_/g, "/");
   const indentNumber = req.query.indent_number || (req.body && req.body.indent_number) || null; // Support Case 2
   const { rr_number, rake_loading_end_railway, door_closing_datetime, rake_haul_out_datetime } = req.body || {}; // ✅ FIX: Only get user input fields, NOT auto-populated fields
   const username = req.body.username || req.headers["x-username"] || null; // Get username from body or header
@@ -2801,7 +2801,7 @@ const getActivityTimeline = async (req, res) => {
   try {
     // ✅ FIX: URL trainId is now always rake_serial_number
     // No need to resolve - use it directly
-    const decodedTrainId = decodeURIComponent(trainId);
+    const decodedTrainId = trainId.replace(/_/g, "/");
     const rakeSerialNumber = decodedTrainId;
 
     // Get activity timeline from activity_timeline table
@@ -2979,7 +2979,7 @@ const getActivityTimeline = async (req, res) => {
 
 const exportChanges = async (req, res) => {
   const { trainId, activityId } = req.params;
-  const decodedTrainId = decodeURIComponent(trainId);
+  const decodedTrainId = trainId.replace(/_/g, "/");
 
   // Helper to format activity_time for Excel
   const formatTime = (dt) => {
@@ -3161,7 +3161,7 @@ const exportChanges = async (req, res) => {
 
 const exportAllReviewerChanges = async (req, res) => {
   const { trainId } = req.params;
-  const decodedTrainId = decodeURIComponent(trainId);
+  const decodedTrainId = trainId.replace(/_/g, "/");
 
   // Helper to format activity_time for Excel
   const formatTime = (dt) => {
@@ -3779,7 +3779,7 @@ const checkMultipleSerials = async (req, res) => {
 const generateMultipleRakeSerial = async (req, res) => {
   const { trainId } = req.params;
   // trainId may be URL encoded (e.g., "2025-26%2F01%2F001"), decode it
-  const decodedTrainId = decodeURIComponent(trainId);
+  const decodedTrainId = trainId.replace(/_/g, "/");
   const { indentNumbers: indentNumbersFromBody } = req.body;
 
   try {
@@ -4151,7 +4151,7 @@ const generateMultipleRakeSerial = async (req, res) => {
 const markSerialHandled = async (req, res) => {
   const { trainId } = req.params;
   // trainId may be URL encoded (e.g., "2025-26%2F01%2F001"), decode it
-  const decodedTrainId = decodeURIComponent(trainId);
+  const decodedTrainId = trainId.replace(/_/g, "/");
 
   try {
     // First, find the actual train_id from dashboard_records

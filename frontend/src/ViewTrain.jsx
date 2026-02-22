@@ -7,13 +7,14 @@ import { formatActivityText } from "./utils/formatActivityText";
 import WarningPopup from "./components/WarningPopup";
 import sackVideo from "./assets/sack.mp4";
 import trainVideo from "./assets/train_video.mp4";
+import { idToUrlParam, urlParamToId } from "./utils/trainIdUtils";
 
 
 const REFRESH_INTERVAL = 5000;
 
 function ViewTrain() {
   const { trainId: encodedTrainId } = useParams();
-  const trainId = encodedTrainId ? decodeURIComponent(encodedTrainId) : null;
+  const trainId = encodedTrainId ? urlParamToId(encodedTrainId) : null;
   const [searchParams] = useSearchParams();
   const indentNumber = searchParams.get('indent_number');
   const navigate = useNavigate();
@@ -22,7 +23,7 @@ function ViewTrain() {
   const [activeTab, setActiveTab] = useState("WAGON");
   const [activities, setActivities] = useState([]);
   const [warning, setWarning] = useState({ open: false, message: "", title: "Warning" });
-  
+
   // Video feed popup state
   const [showVideoPopup, setShowVideoPopup] = useState(false);
   const [videoType, setVideoType] = useState("raw"); // "raw" or "live"
@@ -43,8 +44,8 @@ function ViewTrain() {
 
     try {
       const url = indentNumber
-        ? `${API_BASE}/train/${encodeURIComponent(trainId)}/revoke?indent_number=${encodeURIComponent(indentNumber)}`
-        : `${API_BASE}/train/${encodeURIComponent(trainId)}/revoke`;
+        ? `${API_BASE}/train/${idToUrlParam(trainId)}/revoke?indent_number=${encodeURIComponent(indentNumber)}`
+        : `${API_BASE}/train/${idToUrlParam(trainId)}/revoke`;
 
       const username = localStorage.getItem("username");
       const res = await fetch(url, {
@@ -72,14 +73,14 @@ function ViewTrain() {
       if (activeTab === "WAGON") {
         // Go to TrainEdit (wagon details)
         const editUrl = indentNumber
-          ? `/train/${encodeURIComponent(trainId)}/edit?indent_number=${encodeURIComponent(indentNumber)}`
-          : `/train/${encodeURIComponent(trainId)}/edit`;
+          ? `/train/${idToUrlParam(trainId)}/edit?indent_number=${encodeURIComponent(indentNumber)}`
+          : `/train/${idToUrlParam(trainId)}/edit`;
         navigate(editUrl);
       } else if (activeTab === "RAKE") {
         // Go to DispatchPage (rake details)
         const dispatchUrl = indentNumber
-          ? `/train/${encodeURIComponent(trainId)}/dispatch?indent_number=${encodeURIComponent(indentNumber)}`
-          : `/train/${encodeURIComponent(trainId)}/dispatch`;
+          ? `/train/${idToUrlParam(trainId)}/dispatch?indent_number=${encodeURIComponent(indentNumber)}`
+          : `/train/${idToUrlParam(trainId)}/dispatch`;
         navigate(dispatchUrl);
       } else {
         // Fallback: refresh data if some other tab
@@ -99,8 +100,8 @@ function ViewTrain() {
 
       // Build URL with indent_number query parameter if provided
       const url = indentNumber
-        ? `${API_BASE}/train/${encodeURIComponent(trainId)}/view?indent_number=${encodeURIComponent(indentNumber)}`
-        : `${API_BASE}/train/${encodeURIComponent(trainId)}/view`;
+        ? `${API_BASE}/train/${idToUrlParam(trainId)}/view?indent_number=${encodeURIComponent(indentNumber)}`
+        : `${API_BASE}/train/${idToUrlParam(trainId)}/view`;
 
       const res = await fetch(
         url,
@@ -126,10 +127,10 @@ function ViewTrain() {
   /* ================= FETCH ACTIVITY TIMELINE ================= */
   const fetchActivityTimeline = async () => {
     try {
-      const timelineUrl = indentNumber 
-        ? `${API_BASE}/train/${encodeURIComponent(trainId)}/activity-timeline?indent_number=${encodeURIComponent(indentNumber)}`
-        : `${API_BASE}/train/${encodeURIComponent(trainId)}/activity-timeline`;
-      
+      const timelineUrl = indentNumber
+        ? `${API_BASE}/train/${idToUrlParam(trainId)}/activity-timeline?indent_number=${encodeURIComponent(indentNumber)}`
+        : `${API_BASE}/train/${idToUrlParam(trainId)}/activity-timeline`;
+
       const response = await fetch(timelineUrl, {
         headers: {
           "x-user-role": role,
@@ -237,195 +238,195 @@ function ViewTrain() {
             Wagon Details
           </button>
 
-        <button
+          <button
             style={{
               ...tabStyles.button,
               ...(activeTab === "RAKE" ? tabStyles.activeButton : {}),
             }}
-          onClick={() => setActiveTab("RAKE")}
-        >
-          Rake Details
-        </button>
+            onClick={() => setActiveTab("RAKE")}
+          >
+            Rake Details
+          </button>
 
-        <button
+          <button
             style={{
               ...tabStyles.button,
               ...(activeTab === "VIDEO" ? tabStyles.activeButton : {}),
             }}
-          onClick={() => setActiveTab("VIDEO")}
-        >
+            onClick={() => setActiveTab("VIDEO")}
+          >
             Video Feeds
-        </button>
-      </div>
+          </button>
+        </div>
 
         {/* ================= WAGON DETAILS ================= */}
         {activeTab === "WAGON" && (
-        <>
-          {/* Train Information Card */}
-          <div style={{
-            backgroundColor: "#FFFFFF",
-            borderRadius: "6px",
-            padding: "20px",
-            margin: "0 20px 20px",
-          }}>
-            <div style={topGridStyles.container}>
-              <ReadOnlyField
-                label="Rake Serial Number"
-                value={header.rake_serial_number || header.train_id || "-"}
-              />
-
-              <ReadOnlyField
-                label="Indent Number"
-                value={header.indent_number || "-"}
-              />
-
-              <ReadOnlyField
-                label="Wagon Destination"
-                value={header.wagon_destination || "-"}
-              />
-
-              {!isCustomer && (
+          <>
+            {/* Train Information Card */}
+            <div style={{
+              backgroundColor: "#FFFFFF",
+              borderRadius: "6px",
+              padding: "20px",
+              margin: "0 20px 20px",
+            }}>
+              <div style={topGridStyles.container}>
                 <ReadOnlyField
-                  label="Party / Customer's Name"
-                  value={header.customer_name || "-"}
+                  label="Rake Serial Number"
+                  value={header.rake_serial_number || header.train_id || "-"}
                 />
-          )}
-        </div>
-          </div>
 
-          {/* Wagon Table */}
-          <div style={{
-            backgroundColor: "#FFFFFF",
-            borderRadius: "6px",
-            padding: "20px",
-            margin: "0 20px 20px",
-          }}>
-          <div style={{ overflowX: "auto" }}>
-            <table style={wagonTableStyles.container}>
-              <thead>
-                <tr>
-                  {[
-                    "Wagon Number",
-                    "Wagon Type",
-                    "CC Weight (Tons)",
-                    "Sick Box",
-                    "Bags To Be Loaded",
-                    "Commodity",
-                    "Tower Number",
-                    "Loaded Bag Count",
-                    "Unloaded Bag Count",
-                    "Loading Start Date & Time",
-                    "Loading End Date & Time",
-                    "Seal Number",
-                    "Stoppage / Downtime",
-                    "Remarks",
-                    "Loading Completed",
-                  ].map((h) => (
-                    <th key={h} style={wagonTableStyles.header}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
+                <ReadOnlyField
+                  label="Indent Number"
+                  value={header.indent_number || "-"}
+                />
 
-              <tbody>
-                {wagons.map((w, i) => {
-                  const sealNumbers = w.seal_number 
-                    ? w.seal_number.split(",").map(s => s.trim()).filter(Boolean)
-                    : ["-"];
-                  
-                  return (
-                    <tr key={i} style={wagonTableStyles.row(i)}>
-                      <td style={wagonTableStyles.readOnlyCell}>
-                        {w.wagon_number || "-"}
-                      </td>
+                <ReadOnlyField
+                  label="Wagon Destination"
+                  value={header.wagon_destination || "-"}
+                />
 
-                      <td style={wagonTableStyles.readOnlyCell}>
-                        {w.wagon_type || "-"}
-                      </td>
+                {!isCustomer && (
+                  <ReadOnlyField
+                    label="Party / Customer's Name"
+                    value={header.customer_name || "-"}
+                  />
+                )}
+              </div>
+            </div>
 
-                      <td style={wagonTableStyles.readOnlyCell}>
-                        {w.cc_weight || "-"}
-                      </td>
+            {/* Wagon Table */}
+            <div style={{
+              backgroundColor: "#FFFFFF",
+              borderRadius: "6px",
+              padding: "20px",
+              margin: "0 20px 20px",
+            }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={wagonTableStyles.container}>
+                  <thead>
+                    <tr>
+                      {[
+                        "Wagon Number",
+                        "Wagon Type",
+                        "CC Weight (Tons)",
+                        "Sick Box",
+                        "Bags To Be Loaded",
+                        "Commodity",
+                        "Tower Number",
+                        "Loaded Bag Count",
+                        "Unloaded Bag Count",
+                        "Loading Start Date & Time",
+                        "Loading End Date & Time",
+                        "Seal Number",
+                        "Stoppage / Downtime",
+                        "Remarks",
+                        "Loading Completed",
+                      ].map((h) => (
+                        <th key={h} style={wagonTableStyles.header}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
 
-                      <td style={wagonTableStyles.readOnlyCell}>
-                        {w.sick_box ? "Yes" : "No"}
-                      </td>
+                  <tbody>
+                    {wagons.map((w, i) => {
+                      const sealNumbers = w.seal_number
+                        ? w.seal_number.split(",").map(s => s.trim()).filter(Boolean)
+                        : ["-"];
 
-                      <td style={wagonTableStyles.readOnlyCell}>
-                        {w.wagon_to_be_loaded || "-"}
-                      </td>
+                      return (
+                        <tr key={i} style={wagonTableStyles.row(i)}>
+                          <td style={wagonTableStyles.readOnlyCell}>
+                            {w.wagon_number || "-"}
+                          </td>
 
-                      <td style={wagonTableStyles.readOnlyCell}>
-                        {w.commodity || "-"}
-                      </td>
+                          <td style={wagonTableStyles.readOnlyCell}>
+                            {w.wagon_type || "-"}
+                          </td>
 
-                      <td style={wagonTableStyles.readOnlyCell}>{w.tower_number}</td>
-                      <td style={wagonTableStyles.readOnlyCell}>{w.loaded_bag_count}</td>
-                      <td style={wagonTableStyles.readOnlyCell}>{w.unloaded_bag_count}</td>
-                      <td style={wagonTableStyles.readOnlyCell}>{formatDateTime(w.loading_start_time)}</td>
-                      <td style={wagonTableStyles.readOnlyCell}>{formatDateTime(w.loading_end_time)}</td>
+                          <td style={wagonTableStyles.readOnlyCell}>
+                            {w.cc_weight || "-"}
+                          </td>
 
-                      <td style={{...wagonTableStyles.readOnlyCell, padding: "8px", position: "relative"}}>
-                        <div style={{ 
-                          display: "flex", 
-                          flexDirection: "column", 
-                          gap: "4px",
-                          paddingBottom: sealNumbers.length > 1 ? "28px" : "0"
-                        }}>
-                          {sealNumbers.map((seal, sealIdx) => (
+                          <td style={wagonTableStyles.readOnlyCell}>
+                            {w.sick_box ? "Yes" : "No"}
+                          </td>
+
+                          <td style={wagonTableStyles.readOnlyCell}>
+                            {w.wagon_to_be_loaded || "-"}
+                          </td>
+
+                          <td style={wagonTableStyles.readOnlyCell}>
+                            {w.commodity || "-"}
+                          </td>
+
+                          <td style={wagonTableStyles.readOnlyCell}>{w.tower_number}</td>
+                          <td style={wagonTableStyles.readOnlyCell}>{w.loaded_bag_count}</td>
+                          <td style={wagonTableStyles.readOnlyCell}>{w.unloaded_bag_count}</td>
+                          <td style={wagonTableStyles.readOnlyCell}>{formatDateTime(w.loading_start_time)}</td>
+                          <td style={wagonTableStyles.readOnlyCell}>{formatDateTime(w.loading_end_time)}</td>
+
+                          <td style={{ ...wagonTableStyles.readOnlyCell, padding: "8px", position: "relative" }}>
+                            <div style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: "4px",
+                              paddingBottom: sealNumbers.length > 1 ? "28px" : "0"
+                            }}>
+                              {sealNumbers.map((seal, sealIdx) => (
+                                <div
+                                  key={sealIdx}
+                                  style={{
+                                    padding: "6px",
+                                    fontSize: "11px",
+                                    textAlign: "center",
+                                    color: "#000000",
+                                  }}
+                                >
+                                  {seal}
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+
+                          <td style={wagonTableStyles.readOnlyCell}>{w.stoppage_time || "-"}</td>
+
+                          <td style={wagonTableStyles.readOnlyCell}>
+                            {w.remarks || "-"}
+                          </td>
+
+                          <td style={wagonTableStyles.readOnlyCell}>
                             <div
-                              key={sealIdx}
                               style={{
-                                padding: "6px",
-                                fontSize: "11px",
-                                textAlign: "center",
-                                color: "#000000",
+                                width: "46px",
+                                height: "24px",
+                                backgroundColor: w.loading_status ? "#4CAF50" : "#5a5a5aff",
+                                borderRadius: "24px",
+                                position: "relative",
+                                margin: "0 auto",
                               }}
                             >
-                              {seal}
+                              <div
+                                style={{
+                                  width: "20px",
+                                  height: "20px",
+                                  backgroundColor: "#fff",
+                                  borderRadius: "50%",
+                                  position: "absolute",
+                                  top: "2px",
+                                  left: w.loading_status ? "24px" : "2px",
+                                  boxShadow: "0 2px 5px rgba(0,0,0,0.3)",
+                                }}
+                              />
                             </div>
-                          ))}
-                        </div>
-                      </td>
-
-                      <td style={wagonTableStyles.readOnlyCell}>{w.stoppage_time || "-"}</td>
-
-                      <td style={wagonTableStyles.readOnlyCell}>
-                        {w.remarks || "-"}
-                      </td>
-
-                      <td style={wagonTableStyles.readOnlyCell}>
-                        <div
-                          style={{
-                            width: "46px",
-                            height: "24px",
-                            backgroundColor: w.loading_status ? "#4CAF50" : "#5a5a5aff",
-                            borderRadius: "24px",
-                            position: "relative",
-                            margin: "0 auto",
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: "20px",
-                              height: "20px",
-                              backgroundColor: "#fff",
-                              borderRadius: "50%",
-                              position: "absolute",
-                              top: "2px",
-                              left: w.loading_status ? "24px" : "2px",
-                              boxShadow: "0 2px 5px rgba(0,0,0,0.3)",
-                            }}
-                          />
-                        </div>
-                    </td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          </div>
-        </>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
         )}
 
         {/* ================= RAKE DISPATCH DETAILS ================= */}
@@ -475,9 +476,9 @@ function ViewTrain() {
                             // Rake changes are only shown in Excel, not in activity timeline
                             if (activity.activity_type === 'REVIEWER_TRAIN_EDITED' && activity.changeDetails) {
                               // Check if there are wagon changes (not just rake changes)
-                              const hasWagonChanges = activity.changeDetails.wagonChanges && 
-                                                      activity.changeDetails.wagonChanges.length > 0;
-                              
+                              const hasWagonChanges = activity.changeDetails.wagonChanges &&
+                                activity.changeDetails.wagonChanges.length > 0;
+
                               // Only show if there are wagon changes
                               if (!hasWagonChanges) {
                                 return null; // Hide activities that only have rake changes
@@ -508,10 +509,10 @@ function ViewTrain() {
                                 </div>
                               );
                             }
-                            
+
                             const formattedText = formatActivityText(activity.text);
                             const isReviewedAndApproved = activity.text && activity.text.includes('reviewed and approved');
-                            
+
                             return (
                               <div key={actIndex}>
                                 <div style={activityTimelineStyles.activityItem}>
@@ -524,8 +525,8 @@ function ViewTrain() {
                                       onClick={async () => {
                                         try {
                                           const role = localStorage.getItem("role");
-                                          const url = `${API_BASE}/train/${encodeURIComponent(trainId)}/export-all-reviewer-changes`;
-                                          
+                                          const url = `${API_BASE}/train/${idToUrlParam(trainId)}/export-all-reviewer-changes`;
+
                                           const response = await fetch(url, {
                                             headers: {
                                               "x-user-role": role || "ADMIN",
@@ -540,7 +541,7 @@ function ViewTrain() {
 
                                           // Get the blob from response
                                           const blob = await response.blob();
-                                          
+
                                           // Extract filename from Content-Disposition header, or use default
                                           const contentDisposition = response.headers.get('Content-Disposition');
                                           let filename = `${trainId}_changes.xlsx`;
@@ -550,17 +551,17 @@ function ViewTrain() {
                                               filename = filenameMatch[1];
                                             }
                                           }
-                                          
+
                                           // Create a temporary URL for the blob
                                           const blobUrl = window.URL.createObjectURL(blob);
-                                          
+
                                           // Create a temporary anchor element and trigger download
                                           const link = document.createElement('a');
                                           link.href = blobUrl;
                                           link.download = filename;
                                           document.body.appendChild(link);
                                           link.click();
-                                          
+
                                           // Clean up
                                           document.body.removeChild(link);
                                           window.URL.revokeObjectURL(blobUrl);
@@ -610,61 +611,61 @@ function ViewTrain() {
               <DispatchField label="Loading Completion Officer" value={dispatch?.loading_completion_officer || "-"} />
               <DispatchField label="Remarks(Operations)" value={dispatch?.remarks || "-"} />
               <DispatchField label="RR Number" value={dispatch?.rr_number || "-"} />
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ================= VIDEO FEED ================= */}
-      {activeTab === "VIDEO" && (
-        <div style={{
-          backgroundColor: "#FFFFFF",
-          borderRadius: "6px",
-          padding: "20px",
-          margin: "0 20px 20px",
-        }}>
-          <div style={{ overflowX: "auto" }}>
-            <table style={wagonTableStyles.container}>
-            <thead>
-              <tr>
-                  <th style={wagonTableStyles.header}>Wagon Number</th>
-                  <th style={wagonTableStyles.header}>Camera Number</th>
-                  <th style={wagonTableStyles.header}>Tower Number</th>
-                  <th style={wagonTableStyles.header}>Video Feed</th>
-              </tr>
-            </thead>
-            <tbody>
-              {wagons.map((w, i) => (
-                  <tr key={i} style={wagonTableStyles.row(i)}>
-                    <td style={wagonTableStyles.readOnlyCell}>
-                      {w.wagon_number || "-"}
-                    </td>
-                    <td style={wagonTableStyles.readOnlyCell}>
-                      -
-                    </td>
-                    <td style={wagonTableStyles.readOnlyCell}>
-                      {w.tower_number}
-                    </td>
-                    <td style={{...wagonTableStyles.readOnlyCell, display: "flex", gap: "8px", justifyContent: "center", padding: "10px"}}>
-                      <button 
-                        style={getButtonStyle("action")}
-                        onClick={handleViewClick}
-                      >
-                        ▶ View
-                      </button>
-                      <button 
-                        style={getButtonStyle("action")}
-                        onClick={handleDownloadClick}
-                      >
-                      ⬇ Download
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {/* ================= VIDEO FEED ================= */}
+        {activeTab === "VIDEO" && (
+          <div style={{
+            backgroundColor: "#FFFFFF",
+            borderRadius: "6px",
+            padding: "20px",
+            margin: "0 20px 20px",
+          }}>
+            <div style={{ overflowX: "auto" }}>
+              <table style={wagonTableStyles.container}>
+                <thead>
+                  <tr>
+                    <th style={wagonTableStyles.header}>Wagon Number</th>
+                    <th style={wagonTableStyles.header}>Camera Number</th>
+                    <th style={wagonTableStyles.header}>Tower Number</th>
+                    <th style={wagonTableStyles.header}>Video Feed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {wagons.map((w, i) => (
+                    <tr key={i} style={wagonTableStyles.row(i)}>
+                      <td style={wagonTableStyles.readOnlyCell}>
+                        {w.wagon_number || "-"}
+                      </td>
+                      <td style={wagonTableStyles.readOnlyCell}>
+                        -
+                      </td>
+                      <td style={wagonTableStyles.readOnlyCell}>
+                        {w.tower_number}
+                      </td>
+                      <td style={{ ...wagonTableStyles.readOnlyCell, display: "flex", gap: "8px", justifyContent: "center", padding: "10px" }}>
+                        <button
+                          style={getButtonStyle("action")}
+                          onClick={handleViewClick}
+                        >
+                          ▶ View
+                        </button>
+                        <button
+                          style={getButtonStyle("action")}
+                          onClick={handleDownloadClick}
+                        >
+                          ⬇ Download
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
         {/* ================= FOOTER ================= */}
         <div style={{ display: "flex", justifyContent: "space-between", margin: "30px 20px 20px", gap: "10px" }}>
@@ -682,28 +683,28 @@ function ViewTrain() {
 
           {/* Right side: Close and Next buttons */}
           <div style={{ display: "flex", gap: "10px" }}>
-          <button
-            style={getButtonStyle("cancel")}
-            onClick={() => navigate("/dashboard")}
-          >
-            Close
-          </button>
-          
-          {/* Show Next button only for Wagon Details and Rake Details tabs */}
-          {activeTab !== "VIDEO" && (
-      <button
-              style={getButtonStyle("proceed")}
-              onClick={() => {
-                if (activeTab === "WAGON") {
-                  setActiveTab("RAKE");
-                } else if (activeTab === "RAKE") {
-                  setActiveTab("VIDEO");
-                }
-              }}
-      >
-              Next
-      </button>
-          )}
+            <button
+              style={getButtonStyle("cancel")}
+              onClick={() => navigate("/dashboard")}
+            >
+              Close
+            </button>
+
+            {/* Show Next button only for Wagon Details and Rake Details tabs */}
+            {activeTab !== "VIDEO" && (
+              <button
+                style={getButtonStyle("proceed")}
+                onClick={() => {
+                  if (activeTab === "WAGON") {
+                    setActiveTab("RAKE");
+                  } else if (activeTab === "RAKE") {
+                    setActiveTab("VIDEO");
+                  }
+                }}
+              >
+                Next
+              </button>
+            )}
           </div>
         </div>
 
@@ -747,7 +748,7 @@ function VideoPopup({ open, onClose, videoType, onVideoTypeChange, rawVideoSrc, 
   useEffect(() => {
     if (videoRef.current && videoType === "live") {
       const video = videoRef.current;
-      
+
       // Prevent any seeking on live video - force forward progression only
       const handleSeeking = () => {
         // Reset to last valid time if user tries to seek backward
@@ -870,14 +871,14 @@ function VideoPopup({ open, onClose, videoType, onVideoTypeChange, rawVideoSrc, 
               // Toggle fullscreen on double-click for live video
               if (isLive && videoRef.current) {
                 const video = videoRef.current;
-                
+
                 // Check if already in fullscreen
-                const isFullscreen = 
+                const isFullscreen =
                   document.fullscreenElement ||
                   document.webkitFullscreenElement ||
                   document.mozFullScreenElement ||
                   document.msFullscreenElement;
-                
+
                 if (isFullscreen) {
                   // Exit fullscreen
                   if (document.exitFullscreen) {

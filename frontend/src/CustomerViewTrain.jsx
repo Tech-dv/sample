@@ -4,12 +4,13 @@ import AppShell from "./AppShell";
 import { API_BASE } from "./api";
 import sackVideo from "./assets/sack.mp4";
 import trainVideo from "./assets/train_video.mp4";
+import { idToUrlParam, urlParamToId } from "./utils/trainIdUtils";
 
 const REFRESH_INTERVAL = 5000;
 
 function CustomerViewTrain() {
   const { trainId: encodedTrainId } = useParams();
-  const trainId = encodedTrainId ? decodeURIComponent(encodedTrainId) : null;
+  const trainId = encodedTrainId ? urlParamToId(encodedTrainId) : null;
   const [searchParams] = useSearchParams();
   const indentNumber = searchParams.get("indent_number");
   const navigate = useNavigate();
@@ -31,8 +32,8 @@ function CustomerViewTrain() {
     try {
       const customerId = localStorage.getItem("customerId");
       const url = indentNumber
-        ? `${API_BASE}/train/${encodeURIComponent(trainId)}/view?indent_number=${encodeURIComponent(indentNumber)}`
-        : `${API_BASE}/train/${encodeURIComponent(trainId)}/view`;
+        ? `${API_BASE}/train/${idToUrlParam(trainId)}/view?indent_number=${encodeURIComponent(indentNumber)}`
+        : `${API_BASE}/train/${idToUrlParam(trainId)}/view`;
 
       const res = await fetch(url, {
         headers: {
@@ -103,11 +104,11 @@ function CustomerViewTrain() {
   const term = searchTerm.toLowerCase().trim();
   const filteredWagons = term
     ? wagons.filter((w) => {
-        const indent = (header.indent_number || "").toLowerCase();
-        const wagonNum = (w.wagon_number || "").toLowerCase();
-        const commodity = (w.commodity || "").toLowerCase();
-        return indent.includes(term) || wagonNum.includes(term) || commodity.includes(term);
-      })
+      const indent = (header.indent_number || "").toLowerCase();
+      const wagonNum = (w.wagon_number || "").toLowerCase();
+      const commodity = (w.commodity || "").toLowerCase();
+      return indent.includes(term) || wagonNum.includes(term) || commodity.includes(term);
+    })
     : wagons;
 
   /* ========== IN-PROGRESS VIEW (no tabs) ========== */

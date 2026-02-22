@@ -8,12 +8,13 @@ import { useAutoSave, loadSavedData, clearSavedData } from "./hooks/useAutoSave"
 import { formatActivityText } from "./utils/formatActivityText";
 import SuccessPopup from "./components/SuccessPopup";
 import CancelPopup from "./components/CancelPopup";
+import { idToUrlParam, urlParamToId } from "./utils/trainIdUtils";
 
 
 /* ================= MAIN PAGE ================= */
 export default function ReviewerDispatch() {
   const { trainId: encodedTrainId } = useParams();
-  const trainId = encodedTrainId ? decodeURIComponent(encodedTrainId) : null;
+  const trainId = encodedTrainId ? urlParamToId(encodedTrainId) : null;
   const [searchParams] = useSearchParams();
   const indentNumber = searchParams.get('indent_number');
   const navigate = useNavigate();
@@ -92,8 +93,8 @@ export default function ReviewerDispatch() {
   const fetchActivityTimeline = async () => {
     try {
       const timelineUrl = indentNumber
-        ? `${API_BASE}/train/${encodeURIComponent(trainId)}/activity-timeline?indent_number=${encodeURIComponent(indentNumber)}`
-        : `${API_BASE}/train/${encodeURIComponent(trainId)}/activity-timeline`;
+        ? `${API_BASE}/train/${idToUrlParam(trainId)}/activity-timeline?indent_number=${encodeURIComponent(indentNumber)}`
+        : `${API_BASE}/train/${idToUrlParam(trainId)}/activity-timeline`;
 
       const response = await fetch(timelineUrl, {
         headers: {
@@ -121,8 +122,8 @@ export default function ReviewerDispatch() {
 
     // Build URL with indent_number if present (Case 2: multiple indents with same train_id)
     const fetchUrl = indentNumber
-      ? `${API_BASE}/train/${encodeURIComponent(trainId)}/dispatch?indent_number=${encodeURIComponent(indentNumber)}`
-      : `${API_BASE}/train/${encodeURIComponent(trainId)}/dispatch`;
+      ? `${API_BASE}/train/${idToUrlParam(trainId)}/dispatch?indent_number=${encodeURIComponent(indentNumber)}`
+      : `${API_BASE}/train/${idToUrlParam(trainId)}/dispatch`;
 
     fetch(fetchUrl, {
       headers: {
@@ -155,7 +156,7 @@ export default function ReviewerDispatch() {
             console.log("Clearance date formatted:", clearanceDate);
             const rakeLoadingEndRailwayDate = formatDateTimeLocal(d.dispatch.rake_loading_end_railway);
             console.log("Rake Loading End Railway date formatted:", rakeLoadingEndRailwayDate);
-            
+
             // ✅ Load door_closing_datetime and rake_haul_out_datetime into form (now user-editable)
             const doorClosingDate = formatDateTimeLocal(d.dispatch.door_closing_datetime);
             const rakeHaulOutDate = formatDateTimeLocal(d.dispatch.rake_haul_out_datetime);
@@ -255,10 +256,10 @@ export default function ReviewerDispatch() {
     const fetchWagonData = async () => {
       try {
         console.log("Fetching wagon data to calculate rake loading times");
-        const wagonUrl = indentNumber 
-          ? `${API_BASE}/train/${encodeURIComponent(trainId)}/view?indent_number=${encodeURIComponent(indentNumber)}`
-          : `${API_BASE}/train/${encodeURIComponent(trainId)}/view`;
-        
+        const wagonUrl = indentNumber
+          ? `${API_BASE}/train/${idToUrlParam(trainId)}/view?indent_number=${encodeURIComponent(indentNumber)}`
+          : `${API_BASE}/train/${idToUrlParam(trainId)}/view`;
+
         const response = await fetch(wagonUrl, {
           headers: {
             "x-user-role": role || "REVIEWER",
@@ -268,7 +269,7 @@ export default function ReviewerDispatch() {
         if (response.ok) {
           const data = await response.json();
           const wagons = data.wagons || [];
-          
+
           if (wagons.length > 0) {
             // ✅ FIX: Sort wagons by tower_number (ascending)
             const sortedWagons = [...wagons].sort((a, b) => {
@@ -276,11 +277,11 @@ export default function ReviewerDispatch() {
               const towerB = b.tower_number || 0;
               return towerA - towerB;
             });
-            
+
             // ✅ FIX: Get first wagon's loading_start_time (ordered by tower_number)
             const firstWagon = sortedWagons.find(w => w.loading_start_time);
             const rakeLoadingStart = firstWagon ? firstWagon.loading_start_time : "";
-            
+
             // ✅ FIX: Only get last wagon's loading_end_time if ALL wagons have loading_end_time filled
             const totalWagons = sortedWagons.length;
             // ✅ FIX: More robust check - ensure loading_end_time exists, is not null/undefined, and is not empty
@@ -288,7 +289,7 @@ export default function ReviewerDispatch() {
               const endTime = w.loading_end_time;
               return endTime != null && String(endTime).trim() !== "";
             }).length;
-            
+
             let rakeLoadingEnd = "";
             // ✅ FIX: Only set if ALL wagons have loading_end_time AND we have wagons
             if (totalWagons > 0 && wagonsWithEndTime === totalWagons) {
@@ -299,7 +300,7 @@ export default function ReviewerDispatch() {
               }
             }
             // If not all wagons have loading_end_time, keep rakeLoadingEnd as empty string
-            
+
             // ✅ FIX: Update autoData with fetched values from wagons
             // Prefer fetched values from wagons (most accurate), but don't overwrite if previous has value and fetched is empty
             setAutoData(prev => {
@@ -312,7 +313,7 @@ export default function ReviewerDispatch() {
                 // This ensures the field is always recalculated from current wagon data, never preserved from previous state
                 rake_loading_end_actual: (wagonsWithEndTime === totalWagons && rakeLoadingEnd && rakeLoadingEnd.trim() !== "") ? rakeLoadingEnd : "",
               };
-            
+
               console.log("Updating autoData with wagon times:", {
                 fetchedFromWagons: {
                   rake_loading_start_datetime: rakeLoadingStart,
@@ -329,7 +330,7 @@ export default function ReviewerDispatch() {
                 wagonsWithEndTime: wagonsWithEndTime,
                 allWagonsHaveEndTime: wagonsWithEndTime === totalWagons
               });
-              
+
               return newData;
             });
           } else {
@@ -367,7 +368,7 @@ export default function ReviewerDispatch() {
     // Refresh activity timeline when window receives focus
     const handleFocus = () => {
       console.log("[ReviewerDispatch] Window received focus, refreshing activity timeline");
-    fetchActivityTimeline();
+      fetchActivityTimeline();
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -421,23 +422,23 @@ export default function ReviewerDispatch() {
     if (!dateTimeString) return "-";
     try {
       const date = new Date(dateTimeString);
-      
+
       // Check if date is valid
       if (isNaN(date.getTime())) {
         console.warn("Invalid date:", dateTimeString);
         return "-";
       }
-      
+
       // Get date parts (local timezone)
       const month = date.getMonth() + 1; // 1-12
       const day = date.getDate(); // 1-31
       const year = date.getFullYear();
-      
+
       // Get time parts (24-hour format, local timezone)
       const hours = String(date.getHours()).padStart(2, '0');
       const minutes = String(date.getMinutes()).padStart(2, '0');
       const seconds = String(date.getSeconds()).padStart(2, '0');
-      
+
       // Format: M/D/YYYY, HH:mm:ss (24-hour format, local timezone)
       return `${month}/${day}/${year}, ${hours}:${minutes}:${seconds}`;
     } catch (e) {
@@ -449,7 +450,7 @@ export default function ReviewerDispatch() {
   /* ================= FORMAT FILENAME FROM RAKE SERIAL NUMBER ================= */
   const formatRakeSerialFilename = (rakeSerial) => {
     if (!rakeSerial) return `${trainId}_changes.xlsx`;
-    
+
     // Parse rake_serial_number format: "2025-26/02/001"
     // Expected output: "2025-26_feb_001_changes.xlsx"
     const parts = rakeSerial.split('/');
@@ -457,18 +458,18 @@ export default function ReviewerDispatch() {
       const yearPart = parts[0]; // "2025-26"
       const monthNum = parts[1]; // "02"
       const serialPart = parts[2]; // "001"
-      
+
       // Convert month number to short month name
-      const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 
-                          'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+      const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun',
+        'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
       const monthIndex = parseInt(monthNum, 10) - 1;
-      const monthShort = (monthIndex >= 0 && monthIndex < 12) 
-        ? monthNames[monthIndex] 
+      const monthShort = (monthIndex >= 0 && monthIndex < 12)
+        ? monthNames[monthIndex]
         : monthNum.toLowerCase();
-      
+
       return `${yearPart}_${monthShort}_${serialPart}_changes.xlsx`;
     }
-    
+
     // Fallback to original format if parsing fails
     return `${rakeSerial}_changes.xlsx`;
   };
@@ -542,8 +543,8 @@ export default function ReviewerDispatch() {
 
     // Build URL with indent_number if present (Case 2: multiple indents with same train_id)
     const draftUrl = indentNumber
-      ? `${API_BASE}/train/${encodeURIComponent(trainId)}/dispatch/draft?indent_number=${encodeURIComponent(indentNumber)}`
-      : `${API_BASE}/train/${encodeURIComponent(trainId)}/dispatch/draft`;
+      ? `${API_BASE}/train/${idToUrlParam(trainId)}/dispatch/draft?indent_number=${encodeURIComponent(indentNumber)}`
+      : `${API_BASE}/train/${idToUrlParam(trainId)}/dispatch/draft`;
 
     const res = await fetch(
       draftUrl,
@@ -589,7 +590,7 @@ export default function ReviewerDispatch() {
 
     // Then mark as approved (Loading completed)
     const r = await fetch(
-      `${API_BASE}/reviewer/tasks/${encodeURIComponent(trainId)}/approve`,
+      `${API_BASE}/reviewer/tasks/${idToUrlParam(trainId)}/approve`,
       {
         method: "POST",
         headers: {
@@ -625,7 +626,7 @@ export default function ReviewerDispatch() {
 
     try {
       const res = await fetch(
-        `${API_BASE}/reviewer/tasks/${encodeURIComponent(trainId)}/cancel`,
+        `${API_BASE}/reviewer/tasks/${idToUrlParam(trainId)}/cancel`,
         {
           method: "POST",
           headers: {
@@ -710,7 +711,7 @@ export default function ReviewerDispatch() {
               />
 
               <Field label="Vessel Name" value={form.vessel_name}
-                onChange={(v) => setForm({ ...form, vessel_name: v })} 
+                onChange={(v) => setForm({ ...form, vessel_name: v })}
                 required />
 
               <Field
@@ -748,16 +749,16 @@ export default function ReviewerDispatch() {
                 required
               />
 
-              <Field 
-                type="datetime-local" 
-                label="Door Closing Date & Time" 
+              <Field
+                type="datetime-local"
+                label="Door Closing Date & Time"
                 value={form.door_closing_datetime}
                 onChange={(v) => setForm({ ...form, door_closing_datetime: v })}
-                required 
+                required
               />
-              <Field 
-                type="datetime-local" 
-                label="Rake Haul Out Date & Time" 
+              <Field
+                type="datetime-local"
+                label="Rake Haul Out Date & Time"
                 value={form.rake_haul_out_datetime}
                 onChange={(v) => setForm({ ...form, rake_haul_out_datetime: v })}
               />
@@ -783,9 +784,9 @@ export default function ReviewerDispatch() {
                         // Rake changes are only shown in Excel, not in activity timeline
                         if (activity.activity_type === 'REVIEWER_TRAIN_EDITED' && activity.changeDetails) {
                           // Check if there are wagon changes (not just rake changes)
-                          const hasWagonChanges = activity.changeDetails.wagonChanges && 
-                                                  activity.changeDetails.wagonChanges.length > 0;
-                          
+                          const hasWagonChanges = activity.changeDetails.wagonChanges &&
+                            activity.changeDetails.wagonChanges.length > 0;
+
                           // Only show if there are wagon changes
                           if (!hasWagonChanges) {
                             return null; // Hide activities that only have rake changes
@@ -816,10 +817,10 @@ export default function ReviewerDispatch() {
                             </div>
                           );
                         }
-                        
+
                         const formattedText = formatActivityText(activity.text);
                         const isReviewedAndApproved = activity.text && activity.text.includes('reviewed and approved');
-                        
+
                         return (
                           <div key={actIndex}>
                             <div style={activityTimeline.activityItem}>
@@ -832,8 +833,8 @@ export default function ReviewerDispatch() {
                                   onClick={async () => {
                                     try {
                                       const role = localStorage.getItem("role");
-                                      const url = `${API_BASE}/train/${encodeURIComponent(trainId)}/export-all-reviewer-changes`;
-                                      
+                                      const url = `${API_BASE}/train/${idToUrlParam(trainId)}/export-all-reviewer-changes`;
+
                                       const response = await fetch(url, {
                                         headers: {
                                           "x-user-role": role || "REVIEWER",
@@ -848,20 +849,20 @@ export default function ReviewerDispatch() {
 
                                       // Get the blob from response
                                       const blob = await response.blob();
-                                      
+
                                       // Format filename from rake_serial_number
                                       const filename = formatRakeSerialFilename(rakeSerialNumber || trainId);
-                                      
+
                                       // Create a temporary URL for the blob
                                       const blobUrl = window.URL.createObjectURL(blob);
-                                      
+
                                       // Create a temporary anchor element and trigger download
                                       const link = document.createElement('a');
                                       link.href = blobUrl;
                                       link.download = filename;
                                       document.body.appendChild(link);
                                       link.click();
-                                      
+
                                       // Clean up
                                       document.body.removeChild(link);
                                       window.URL.revokeObjectURL(blobUrl);
@@ -920,7 +921,7 @@ export default function ReviewerDispatch() {
             required />
 
           <Field label="RR Number" value={form.rr_number}
-            onChange={(v) => setForm({ ...form, rr_number: v })} 
+            onChange={(v) => setForm({ ...form, rr_number: v })}
             required />
         </div>
 
@@ -978,8 +979,8 @@ export default function ReviewerDispatch() {
       <CancelPopup
         open={showCancelPopup}
         onClose={() => {
-                  setShowCancelPopup(false);
-                  setCancelRemarks("");
+          setShowCancelPopup(false);
+          setCancelRemarks("");
         }}
         onConfirm={async (remarks) => {
           setCancelRemarks(remarks);
@@ -1101,7 +1102,7 @@ function DateTimeField24({ label, value, onChange, readOnly, required = false, e
       const day = String(today.getDate()).padStart(2, '0');
       dateToUse = `${year}-${month}-${day}`;
     }
-    
+
     // Update parent with date (today if empty) and time
     if (dateToUse) {
       const newValue = combineDateTime(dateToUse, newTime);

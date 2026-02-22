@@ -7,6 +7,7 @@ import SuccessPopup from "./components/SuccessPopup";
 import DraftSavePopup from "./components/DraftSavePopup";
 import InspectionCompletedConfirmPopup from "./components/InspectionCompletedConfirmPopup";
 import WarningPopup from "./components/WarningPopup";
+import { idToUrlParam } from "./utils/trainIdUtils";
 
 
 const POLL_INTERVAL = 2000;
@@ -25,7 +26,7 @@ const formatDateTime24 = (value) => {
     return `${month}/${day}/${year}, ${hours}:${minutes}:${seconds}`;
   } catch {
     return "-";
-}
+  }
 };
 
 function RandomCounting() {
@@ -108,7 +109,7 @@ function RandomCounting() {
       .then((record) => {
         setExistingRecord(record);
         setTrainId(record.train_id || record.rake_serial_number || "");
-        
+
         // Load form data
         setForm({
           client_surveyor_name: record.client_surveyor_name || "",
@@ -116,18 +117,18 @@ function RandomCounting() {
           client_representative_name: record.client_representative_name || "",
           remarks: record.remarks || "",
         });
-        
+
         // Load inspection status and times
         if (record.random_count_start_time) {
           setInspectionStarted(true);
           setStartTime(formatDateTime24(record.random_count_start_time));
         }
-        
+
         if (record.random_count_end_time) {
           setInspectionCompleted(true);
           setEndTime(formatDateTime24(record.random_count_end_time));
         }
-        
+
         // Load inspected counts
         if (record.inspected_loading_count !== undefined) {
           setInspectedLoaded(record.inspected_loading_count || 0);
@@ -152,8 +153,8 @@ function RandomCounting() {
       setWagon(null);
       return;
     }
-    // ✅ FIX: URL-encode the rake_serial_number to handle forward slashes
-    fetch(`${API_BASE}/random-counting/wagons/${encodeURIComponent(trainId)}`, {
+    // ✅ FIX: Use underscore encoding for rake_serial_number in URL path
+    fetch(`${API_BASE}/random-counting/wagons/${idToUrlParam(trainId)}`, {
       headers: { "x-user-role": role },
     })
       .then((r) => r.json())
@@ -166,9 +167,9 @@ function RandomCounting() {
           setWagons(completedWagons);
         } else {
           // Existing record: show all wagons, but if editing, allow selecting only completed ones
-        setWagons(data);
+          setWagons(data);
         }
-        
+
         // If loading existing record, find and set the wagon
         if (existingRecord && existingRecord.wagon_number) {
           const foundWagon = data.find(w => w.wagon_number === existingRecord.wagon_number);
@@ -176,8 +177,8 @@ function RandomCounting() {
             setWagon(foundWagon);
           }
         } else {
-        setWagon(null);
-        resetCounts();
+          setWagon(null);
+          resetCounts();
         }
       })
       .catch((err) => {
@@ -188,7 +189,7 @@ function RandomCounting() {
   /* ================= LOAD CURRENT COUNTS ================= */
   useEffect(() => {
     if (!wagon || !trainId) return;
-    
+
     // If loading existing record, use its data
     if (existingRecord && existingRecord.wagon_number === wagon.wagon_number) {
       setCurrentLoaded(existingRecord.start_loaded_count || 0);
@@ -202,11 +203,11 @@ function RandomCounting() {
       }));
       return;
     }
-    
+
     // For new inspections, fetch live counts
-    // ✅ FIX: URL-encode the rake_serial_number (train_id) to handle forward slashes
+    // ✅ FIX: Use underscore encoding for path, encodeURIComponent for query params
     fetch(
-      `${API_BASE}/random-counting/live-count?train_id=${encodeURIComponent(trainId)}&wagon_number=${encodeURIComponent(wagon.wagon_number)}`,
+      `${API_BASE}/random-counting/live-count?train_id=${idToUrlParam(trainId)}&wagon_number=${encodeURIComponent(wagon.wagon_number)}`,
       { headers: { "x-user-role": role } }
     )
       .then((r) => r.json())
@@ -238,9 +239,9 @@ function RandomCounting() {
     }
 
     pollRef.current = setInterval(async () => {
-      // ✅ FIX: URL-encode the rake_serial_number (train_id) to handle forward slashes
+      // ✅ FIX: Use underscore encoding for path, encodeURIComponent for query params
       const res = await fetch(
-        `${API_BASE}/random-counting/live-count?train_id=${encodeURIComponent(trainId)}&wagon_number=${encodeURIComponent(wagon.wagon_number)}`,
+        `${API_BASE}/random-counting/live-count?train_id=${idToUrlParam(trainId)}&wagon_number=${encodeURIComponent(wagon.wagon_number)}`,
         { headers: { "x-user-role": role } }
       );
       if (!res.ok) return;
@@ -281,7 +282,7 @@ function RandomCounting() {
       );
       return;
     }
-    
+
     // For new inspections, create the record and set start time
     const res = await fetch(`${API_BASE}/random-counting/start`, {
       method: "POST",
@@ -304,7 +305,7 @@ function RandomCounting() {
     setInspectionStarted(true);
     const now = new Date();
     setStartTime(formatDateTime24(now));
-    
+
     // If this is a new record, we need to reload it to get the ID
     // For now, we'll handle it in the save function
   };
@@ -386,14 +387,14 @@ function RandomCounting() {
       setWarning({ open: true, message: "Please start the inspection first", title: "Warning" });
       return;
     }
-    
+
     // Validate required fields based on completion status and edit mode
     if (!isFormComplete()) {
       const missing = getMissingFields();
       setWarning({ open: true, message: `Please fill all required fields: ${missing.join(", ")}`, title: "Warning" });
       return;
     }
-    
+
     // Prepare payload
     const payload = {
       train_id: trainId,
@@ -403,12 +404,12 @@ function RandomCounting() {
       inspection_completed: inspectionCompleted,
       ...form,
     };
-    
+
     // If updating existing record, include the ID
     if (existingRecord && existingRecord.id) {
       payload.id = existingRecord.id;
     }
-    
+
     // Use save endpoint for both IN_PROGRESS and COMPLETED
     const response = await fetch(`${API_BASE}/random-counting/save`, {
       method: "POST",
@@ -418,20 +419,20 @@ function RandomCounting() {
       },
       body: JSON.stringify(payload),
     });
-    
+
     if (!response.ok) {
       setWarning({ open: true, message: "Save failed", title: "Error" });
       return;
     }
-    
+
     // Show appropriate popup based on completion status
     if (inspectionCompleted) {
-    setShowSuccess(true);
+      setShowSuccess(true);
     } else {
       setShowDraftPopup(true);
     }
   };
-  
+
   /* ================= CHECK IF VIEW MODE ================= */
   // View mode: when viewing (not editing) any existing record, regardless of status
   const isViewMode = existingRecord && mode !== "edit";
@@ -515,7 +516,7 @@ function RandomCounting() {
                     value={wagon?.wagon_number || ""}
                     onChange={(e) => {
                       const foundWagon = wagons.find(
-                          (w) => w.wagon_number === e.target.value
+                        (w) => w.wagon_number === e.target.value
                       );
                       if (foundWagon) {
                         setWagon(foundWagon);
@@ -542,97 +543,97 @@ function RandomCounting() {
                   </select>
                 </fieldset>
 
-                <Field 
+                <Field
                   label="Current Loaded Count"
                   value={currentLoaded}
                   readOnly
                 />
-                  </div>
+              </div>
 
               {/* Row 2: Inspected Unloading Count, Random Counting Start Date & Time */}
               <div style={styles.formRow}>
-                <Field 
+                <Field
                   label="Inspected Unloading Count"
                   type="number"
                   value={inspectedUnloaded || ""}
                   readOnly
                 />
 
-                <Field 
+                <Field
                   label="Random Counting Start Date & Time"
                   value={startTime || "-"}
                   readOnly
                   placeholder="-"
                 />
-                  </div>
+              </div>
 
               {/* Row 3: Client Surveyor Name, Bothra Surveyor Name, Client Representative Name */}
               <div style={styles.formRow}>
-                <Field 
+                <Field
                   label="Client Surveyor Name"
-                            value={form.client_surveyor_name}
-                            onChange={(e) =>
-                              setForm({
-                                ...form,
+                  value={form.client_surveyor_name}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
                       client_surveyor_name: e,
-                              })
-                            }
+                    })
+                  }
                   readOnly={isViewMode || !inspectionStarted}
                   required={inspectionCompleted}
                 />
 
-                <Field 
+                <Field
                   label="Bothra Surveyor Name"
-                            value={form.bothra_surveyor_name}
-                            onChange={(e) =>
-                              setForm({
-                                ...form,
+                  value={form.bothra_surveyor_name}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
                       bothra_surveyor_name: e,
-                              })
-                            }
+                    })
+                  }
                   readOnly={isViewMode || !inspectionStarted}
                   required={inspectionCompleted}
                 />
 
-                <Field 
+                <Field
                   label="Client Representative Name"
-                            value={form.client_representative_name}
-                            onChange={(e) =>
-                              setForm({
-                                ...form,
+                  value={form.client_representative_name}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
                       client_representative_name: e,
-                              })
-                            }
+                    })
+                  }
                   readOnly={isViewMode || !inspectionStarted}
                   required={inspectionCompleted}
-                          />
-                      </div>
+                />
+              </div>
 
               {/* Row 4: Random Counting End Date & Time, Inspected Loading Count, Remarks */}
               <div style={styles.formRow}>
-                <Field 
+                <Field
                   label="Random Counting End Date & Time"
                   value={endTime || "-"}
                   readOnly
                   placeholder="-"
                 />
 
-                <Field 
+                <Field
                   label="Inspected Loading Count"
                   type="number"
                   value={inspectedLoaded || ""}
                   readOnly
                 />
 
-                <Field 
+                <Field
                   label="Remarks"
-                          value={form.remarks}
-                          onChange={(e) =>
+                  value={form.remarks}
+                  onChange={(e) =>
                     setForm({ ...form, remarks: e })
                   }
                   readOnly={isViewMode || !inspectionStarted}
                   required={inspectionCompleted || (existingRecord && mode === "edit")}
-                        />
+                />
               </div>
             </div>
 
@@ -652,7 +653,7 @@ function RandomCounting() {
                   }}
                   disabled={isViewMode || inspectionStarted}
                 />
-                    </div>
+              </div>
               <div style={styles.toggleItem}>
                 <label style={styles.toggleLabel}>Inspection Completed</label>
                 <ToggleSwitch
@@ -660,7 +661,7 @@ function RandomCounting() {
                   onChange={handleInspectionCompletedToggle}
                   disabled={isViewMode || inspectionCompleted || !inspectionStarted}
                 />
-            </div>
+              </div>
             </div>
           </div>
 
@@ -673,7 +674,7 @@ function RandomCounting() {
               Back
             </button>
             {!isViewMode && (
-              <button 
+              <button
                 style={{
                   ...styles.saveButton,
                   ...(isFormComplete() ? {} : styles.saveButtonDisabled)
@@ -686,36 +687,36 @@ function RandomCounting() {
             )}
           </div>
 
-        <DraftSavePopup
-          open={showDraftPopup}
-          onClose={() => {
-            setShowDraftPopup(false);
-            navigate("/random-counting");
-          }}
-        />
+          <DraftSavePopup
+            open={showDraftPopup}
+            onClose={() => {
+              setShowDraftPopup(false);
+              navigate("/random-counting");
+            }}
+          />
 
           <SuccessPopup
             open={showSuccess}
             onClose={() => {
               setShowSuccess(false);
-            navigate("/random-counting");
+              navigate("/random-counting");
             }}
-          title="Inspection Completed"
-          message="Random Counting Records Saved Successfully"
-        />
+            title="Inspection Completed"
+            message="Random Counting Records Saved Successfully"
+          />
 
-        <InspectionCompletedConfirmPopup
-          open={showConfirmPopup}
-          onClose={cancelInspectionCompleted}
-          onYes={confirmInspectionCompleted}
-          onNo={cancelInspectionCompleted}
-        />
-        <WarningPopup
-          open={warning.open}
-          onClose={() => setWarning({ open: false, message: "", title: "Warning" })}
-          message={warning.message}
-          title={warning.title}
-        />
+          <InspectionCompletedConfirmPopup
+            open={showConfirmPopup}
+            onClose={cancelInspectionCompleted}
+            onYes={confirmInspectionCompleted}
+            onNo={cancelInspectionCompleted}
+          />
+          <WarningPopup
+            open={warning.open}
+            onClose={() => setWarning({ open: false, message: "", title: "Warning" })}
+            message={warning.message}
+            title={warning.title}
+          />
         </div>
       </div>
     </AppShell>
@@ -725,7 +726,7 @@ function RandomCounting() {
 /* ================= HELPERS ================= */
 const Field = ({ label, value, onChange, readOnly, type = "text", required = false, error, placeholder, list }) => {
   const isSelect = type === "select" && !readOnly;
-  
+
   return (
     <fieldset style={{
       ...fieldStyles.fieldset,
@@ -768,7 +769,7 @@ const Field = ({ label, value, onChange, readOnly, type = "text", required = fal
               cursor: readOnly ? "not-allowed" : "text",
             }}
           />
-  </div>
+        </div>
       )}
       {error && (
         <div style={{ marginTop: "4px", fontSize: "12px", color: "#d32f2f" }}>
