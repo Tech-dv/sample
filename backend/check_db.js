@@ -4,7 +4,7 @@ const pool = new Pool({
     user: "myuser",
     host: "localhost",
     database: "sack_count_db",
-    password: "Dockervision01",
+    password: "DockerVision01",
     port: 5432,
 });
 

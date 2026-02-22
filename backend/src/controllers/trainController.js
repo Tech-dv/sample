@@ -3343,6 +3343,7 @@ const exportAllReviewerChanges = async (req, res) => {
 
 const revokeTrain = async (req, res) => {
   const { trainId } = req.params;
+  const decodedTrainId = trainId.replace(/_/g, "/");
   const { indent_number, username } = req.body;
   const role = req.headers["x-user-role"];
 
@@ -3355,14 +3356,14 @@ const revokeTrain = async (req, res) => {
           FROM dashboard_records 
           WHERE rake_serial_number = $1 AND indent_number = $2
         `;
-      checkParams = [trainId, indent_number];
+      checkParams = [decodedTrainId, indent_number];
     } else {
       checkQuery = `
           SELECT status, assigned_reviewer 
           FROM dashboard_records 
           WHERE rake_serial_number = $1
         `;
-      checkParams = [trainId];
+      checkParams = [decodedTrainId];
     }
 
     const checkRes = await pool.query(checkQuery, checkParams);
@@ -3516,7 +3517,7 @@ const revokeTrain = async (req, res) => {
           `;
 
           await sendAlertEmail(recipientEmails, subject, html);
-          console.log(`[SUPER-REVOKE-NOTIFY] Revocation email sent to ${recipientEmails.join(", ")} for rake ${trainId} by Super Admin ${revokedByLabel}`);
+          console.log(`[SUPER-REVOKE-NOTIFY] Revocation email sent to ${recipientEmails.join(", ")} for rake ${decodedTrainId} by Super Admin ${revokedByLabel}`);
         } catch (emailErr) {
           console.error(`[SUPER-REVOKE-NOTIFY] Failed to send super admin revocation email for rake ${trainId}:`, emailErr.message);
         }
@@ -3599,7 +3600,7 @@ const revokeTrain = async (req, res) => {
           `;
 
           await sendAlertEmail(recipientEmails, subject, html);
-          console.log(`[REVOKE-NOTIFY] Revocation email sent to ${recipientEmails.join(", ")} for rake ${trainId} by ${revokedByLabel}`);
+          console.log(`[REVOKE-NOTIFY] Revocation email sent to ${recipientEmails.join(", ")} for rake ${decodedTrainId} by ${revokedByLabel}`);
         } catch (emailErr) {
           console.error(`[REVOKE-NOTIFY] Failed to send revocation email for rake ${trainId}:`, emailErr.message);
         }
@@ -3747,6 +3748,7 @@ const addActivityTimelineEntry = async (trainId, indentNumber, activityType, use
 
 const checkMultipleSerials = async (req, res) => {
   const { trainId } = req.params;
+  const decodedTrainId = trainId.replace(/_/g, "/");
 
   try {
     // Check if any train_session or dashboard_records exist with pattern trainId-N
@@ -3756,7 +3758,7 @@ const checkMultipleSerials = async (req, res) => {
         WHERE rake_serial_number LIKE $1 AND rake_serial_number != $2
         LIMIT 1
         `,
-      [`${trainId}-%`, trainId]
+      [`${decodedTrainId}-%`, decodedTrainId]
     );
 
     const hasSequentialSerials = sequentialSerials.rows.length > 0;

@@ -27,7 +27,7 @@ const addActivityTimelineEntry = async (trainId, indentNumber, activityType, use
     }
 
     const finalRakeSerialNumber = rakeSerialNumber || trainId;
-    
+
     await pool.query(
       `
       INSERT INTO activity_timeline (indent_number, activity_type, username, activity_time, notes, rake_serial_number)
@@ -241,7 +241,7 @@ const approveTask = async (req, res) => {
     }
 
     const checkResult = await pool.query(checkQuery, checkParams);
-    
+
     if (checkResult.rows.length === 0) {
       return res.status(404).json({
         message: "Task not found. Please check the train ID and indent number."
@@ -412,6 +412,7 @@ const approveTask = async (req, res) => {
 
 const rejectTask = async (req, res) => {
   const { trainId } = req.params;
+  const decodedTrainId = trainId.replace(/_/g, "/");
   const { indent_number } = req.body;
   const reviewerUsername = req.headers["x-reviewer-username"];
 
@@ -425,7 +426,7 @@ const rejectTask = async (req, res) => {
             assigned_reviewer = NULL
         WHERE rake_serial_number = $1 AND indent_number = $2 AND assigned_reviewer = $3
       `;
-      updateParams = [trainId, indent_number, reviewerUsername];
+      updateParams = [decodedTrainId, indent_number, reviewerUsername];
     } else {
       updateQuery = `
         UPDATE dashboard_records 
@@ -433,7 +434,7 @@ const rejectTask = async (req, res) => {
             assigned_reviewer = NULL
         WHERE rake_serial_number = $1 AND assigned_reviewer = $2
       `;
-      updateParams = [trainId, reviewerUsername];
+      updateParams = [decodedTrainId, reviewerUsername];
     }
 
     const result = await pool.query(updateQuery, updateParams);
@@ -444,7 +445,7 @@ const rejectTask = async (req, res) => {
 
     const { remarks } = req.body;
     await addActivityTimelineEntry(
-      trainId,
+      decodedTrainId,
       indent_number || null,
       'REJECTED',
       reviewerUsername,

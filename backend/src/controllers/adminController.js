@@ -4,7 +4,8 @@ const path = require("path");
 
 const saveDraft = async (req, res) => {
   const { indent_number } = req.body;
-  const train_id = req.params.train_id;
+  const train_id_param = req.params.train_id;
+  const train_id = train_id_param.replace(/_/g, "/");
 
   const statusRes = await pool.query(
     "SELECT status FROM dashboard_records WHERE rake_serial_number = $1",
