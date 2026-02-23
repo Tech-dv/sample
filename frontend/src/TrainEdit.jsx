@@ -358,27 +358,23 @@ function TrainEdit() {
               ? (loadedBagCount >= wagonToBeLoaded)
               : false;
 
-            // ✅ CRITICAL FIX: Only mark as manually toggled if user explicitly set status to true when condition is not met
-            // DO NOT mark as manually toggled if:
-            // - DB status is FALSE and calculated is TRUE (this is just an unsaved auto-update, not a manual toggle)
-            // This prevents unsaved auto-updates from being treated as manual toggles
-            // Only explicit user clicks on the toggle button will mark it as manual (handled in toggleStatus function)
-            if (dbLoadingStatus && !calculatedStatus) {
-              // User manually set to true when condition is not met - definitely manual
+            // ✅ CRITICAL FIX: Only mark as manually toggled if user explicitly set status
+            // that differs from the calculated status.
+            // This includes:
+            // 1. DB status is TRUE and calculated is FALSE (manually toggled ON)
+            // 2. DB status is FALSE and calculated is TRUE (manually toggled OFF) -> This is the new requirement
+            if (dbLoadingStatus !== calculatedStatus) {
               manuallyToggledSet.add(w.tower_number || (i + 1));
             }
-            // If DB has false but condition is met, DON'T mark as manual - it's just an unsaved auto-update
-            // The status will be auto-corrected to true below
 
             // ✅ CRITICAL FIX: Remove seal_number from the object to avoid conflicts
             // We only use seal_numbers array, not seal_number string from database
             const { seal_number: _, ...wagonWithoutSealNumber } = w;
 
-            // ✅ CRITICAL FIX: If condition is met but DB has false, auto-update to true
-            // This handles the case where auto-update happened but wasn't saved
-            // This is NOT a manual toggle - it's just an unsaved auto-update
-            // Only explicit user clicks on the toggle button will be treated as manual toggles
-            const finalLoadingStatus = calculatedStatus ? true : dbLoadingStatus;
+            // ✅ CRITICAL FIX: Respect the database status
+            // Previously, we were auto-correcting false to true if condition was met.
+            // Now we keep it as it is in the database, because the user might have manually toggled it OFF.
+            const finalLoadingStatus = dbLoadingStatus;
 
             return {
               ...wagonWithoutSealNumber,
