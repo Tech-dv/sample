@@ -18,7 +18,7 @@ if (API_KEY && API_KEY !== "SG.your_api_key_here") {
 } else {
   console.warn(
     "[EMAIL] SendGrid API key not configured – emails will be skipped. " +
-      "Set SENDGRID_API_KEY in backend/.env"
+    "Set SENDGRID_API_KEY in backend/.env"
   );
 }
 

@@ -464,6 +464,7 @@ const editTrain = async (req, res) => {
 const saveDraft = async (req, res) => {
   const { trainId } = req.params;
   const { header, wagons, editOptions } = req.body;
+  const indentNumberFromQuery = req.query.indent_number; // Get indent_number from query params
   const singleIndent = editOptions?.singleIndent !== undefined ? editOptions.singleIndent : true;
   const hlOnly = editOptions?.wagonTypeHL !== undefined ? editOptions.wagonTypeHL : false;
 
@@ -661,76 +662,102 @@ const saveDraft = async (req, res) => {
       /* ===============================
          MULTIPLE INDENT MODE: One row per indent (ONLY after splitting via Proceed -> Yes)
          During Save: Keep all wagons in ONE dashboard record (like single indent mode)
+         UNLESS: This is a child record (indentNumberFromQuery is provided)
          =============================== */
 
-      // ✅ CRITICAL FIX: During Save, create ONLY ONE dashboard record (with null/empty indent_number)
-      // DO NOT split by indent number during Save - splitting only happens when user clicks Proceed -> Yes
-      // This ensures all wagons stay together until user explicitly chooses to split
+      // ✅ FIX: Determine if we should only update a single indent record (child record)
+      // or if we should consolidate/maintain the parent record
+      const isSavingChildRecord = !singleIndent && indentNumberFromQuery && indentNumberFromQuery !== '';
 
-      // Check if train already has sequential serials flag (before any operations)
-      const existingRecordData = await pool.query(
-        `SELECT has_sequential_serials, siding, created_time, assigned_reviewer, status 
-         FROM dashboard_records 
-         WHERE rake_serial_number = $1 
-         AND (indent_number IS NULL OR indent_number = '')
-         LIMIT 1`,
-        [rakeSerialNumber]
-      );
-      hasSequentialSerials = existingRecordData.rows[0]?.has_sequential_serials || false;
-      console.log(`[DEBUG] Train ${rakeSerialNumber}: hasSequentialSerials = ${hasSequentialSerials}`);
-      const preservedSiding = siding || existingRecordData.rows[0]?.siding;
-      const preservedCreatedTime = existingRecordData.rows[0]?.created_time || createdTime;
-      const assignedReviewer = existingRecordData.rows[0]?.assigned_reviewer || null;
-      const existingStatus = existingRecordData.rows[0]?.status || 'DRAFT';
+      if (isSavingChildRecord) {
+        console.log(`[DRAFT SAVE] Child record detected for indent ${indentNumberFromQuery}. Updating only this indent.`);
 
-      // Preserve LOADING_IN_PROGRESS and PENDING_APPROVAL statuses, otherwise use DRAFT
-      const statusToUse = (existingStatus === 'LOADING_IN_PROGRESS' || existingStatus === 'PENDING_APPROVAL') ? existingStatus : 'DRAFT';
+        // Update the specific dashboard record for this indent
+        await pool.query(
+          `UPDATE dashboard_records 
+           SET customer_id = $1, commodity = $2, wagon_destination = $3, 
+               hl_only = $4, status = (CASE WHEN status IN ('LOADING_IN_PROGRESS', 'PENDING_APPROVAL') THEN status ELSE 'DRAFT' END),
+               multiple_indent_confirmed = TRUE
+           WHERE rake_serial_number = $5 AND indent_number = $6`,
+          [
+            header?.customer_id || null,
+            wagons.find(w => w.commodity)?.commodity || null,
+            wagons.find(w => w.wagon_destination)?.wagon_destination || null,
+            hlOnly,
+            rakeSerialNumber,
+            indentNumberFromQuery
+          ]
+        );
+      } else {
+        // ✅ CRITICAL FIX: During Save for PARENT record, create ONLY ONE dashboard record (with null/empty indent_number)
+        // DO NOT split by indent number during Save - splitting only happens when user clicks Proceed -> Yes
+        // This ensures all wagons stay together until user explicitly chooses to split
 
-      // Get first commodity and wagon_destination from wagons (for the single dashboard record)
-      const firstCommodity = wagons.find(w => w.commodity)?.commodity || null;
-      const firstWagonDestination = wagons.find(w => w.wagon_destination)?.wagon_destination || null;
+        // Check if train already has sequential serials flag (before any operations)
+        const existingRecordData = await pool.query(
+          `SELECT has_sequential_serials, siding, created_time, assigned_reviewer, status 
+           FROM dashboard_records 
+           WHERE rake_serial_number = $1 
+           AND (indent_number IS NULL OR indent_number = '')
+           LIMIT 1`,
+          [rakeSerialNumber]
+        );
+        hasSequentialSerials = existingRecordData.rows[0]?.has_sequential_serials || false;
+        console.log(`[DEBUG] Train ${rakeSerialNumber}: hasSequentialSerials = ${hasSequentialSerials}`);
+        const preservedSiding = siding || existingRecordData.rows[0]?.siding;
+        const preservedCreatedTime = existingRecordData.rows[0]?.created_time || createdTime;
+        const assignedReviewer = existingRecordData.rows[0]?.assigned_reviewer || null;
+        const existingStatus = existingRecordData.rows[0]?.status || 'DRAFT';
 
-      // ✅ FIX: Check if multiple indent mode is confirmed (user selected multiple indent AND filled at least 1 indent number)
-      const hasIndentNumbers = wagons.some(w =>
-        w.indent_number && w.indent_number.trim() !== ''
-      );
-      const multipleIndentConfirmed = !singleIndent && hasIndentNumbers;
+        // Preserve LOADING_IN_PROGRESS and PENDING_APPROVAL statuses, otherwise use DRAFT
+        const statusToUse = (existingStatus === 'LOADING_IN_PROGRESS' || existingStatus === 'PENDING_APPROVAL') ? existingStatus : 'DRAFT';
 
-      // Delete ALL dashboard records for this rake_serial_number (including any that were split)
-      // This ensures we start fresh with a single parent record during Save
-      await pool.query(
-        `DELETE FROM dashboard_records 
-         WHERE (rake_serial_number = $1 OR rake_serial_number LIKE $2)`,
-        [rakeSerialNumber, `${rakeSerialNumber}-%`]
-      );
-      console.log(`[DRAFT SAVE] Deleted all dashboard records for ${rakeSerialNumber} to create single parent record`);
+        // Get first commodity and wagon_destination from wagons (for the single dashboard record)
+        const firstCommodity = wagons.find(w => w.commodity)?.commodity || null;
+        const firstWagonDestination = wagons.find(w => w.wagon_destination)?.wagon_destination || null;
 
-      // Create ONE dashboard record (parent record with null/empty indent_number)
-      // This will be split later when user clicks Proceed -> Yes
-      await pool.query(
-        `
-        INSERT INTO dashboard_records (rake_serial_number, indent_number, customer_id, commodity,
-          wagon_destination, status, single_indent, hl_only, siding, created_time, has_sequential_serials, assigned_reviewer, multiple_indent_confirmed
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-        `,
-        [
-          rakeSerialNumber, // Use base rake_serial_number
-          null, // ✅ CRITICAL: Use null/empty indent_number for parent record during Save
-          header?.customer_id || null, // Use header customer_id if available
-          firstCommodity,
-          firstWagonDestination,
-          statusToUse,
-          singleIndent,
-          hlOnly,
-          preservedSiding,
-          preservedCreatedTime,
-          hasSequentialSerials,
-          assignedReviewer,
-          multipleIndentConfirmed, // ✅ Set flag if multiple indent mode with indent numbers filled
-        ]
-      );
-      console.log(`[DRAFT SAVE] Created single parent dashboard record for ${rakeSerialNumber} (multiple indent mode, not split yet), multiple_indent_confirmed=${multipleIndentConfirmed}`);
+        // ✅ FIX: Check if multiple indent mode is confirmed (user selected multiple indent AND filled at least 1 indent number)
+        const hasIndentNumbers = wagons.some(w =>
+          w.indent_number && w.indent_number.trim() !== ''
+        );
+        const multipleIndentConfirmed = !singleIndent && hasIndentNumbers;
+
+        // Delete ALL dashboard records for this rake_serial_number (including any that were split)
+        // This ensures we start fresh with a single parent record during Save
+        await pool.query(
+          `DELETE FROM dashboard_records 
+           WHERE (rake_serial_number = $1 OR rake_serial_number LIKE $2)`,
+          [rakeSerialNumber, `${rakeSerialNumber}-%`]
+        );
+        console.log(`[DRAFT SAVE] Deleted all dashboard records for ${rakeSerialNumber} to create single parent record`);
+
+        // Create ONE dashboard record (parent record with null/empty indent_number)
+        // This will be split later when user clicks Proceed -> Yes
+        await pool.query(
+          `
+          INSERT INTO dashboard_records (rake_serial_number, indent_number, customer_id, commodity,
+            wagon_destination, status, single_indent, hl_only, siding, created_time, has_sequential_serials, assigned_reviewer, multiple_indent_confirmed
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          `,
+          [
+            rakeSerialNumber, // Use base rake_serial_number
+            null, // ✅ CRITICAL: Use null/empty indent_number for parent record during Save
+            header?.customer_id || null, // Use header customer_id if available
+            firstCommodity,
+            firstWagonDestination,
+            statusToUse,
+            singleIndent,
+            hlOnly,
+            preservedSiding,
+            preservedCreatedTime,
+            hasSequentialSerials,
+            assignedReviewer,
+            multipleIndentConfirmed, // ✅ Set flag if multiple indent mode with indent numbers filled
+          ]
+        );
+        console.log(`[DRAFT SAVE] Created single parent dashboard record for ${rakeSerialNumber} (multiple indent mode, not split yet), multiple_indent_confirmed=${multipleIndentConfirmed}`);
+      }
     }
 
 
@@ -860,16 +887,26 @@ const saveDraft = async (req, res) => {
         [rakeSerialNumber]
       );
     } else {
-      // ✅ CRITICAL FIX: In multiple indent mode, delete ALL wagons for this rake_serial_number
-      // During Save, we're saving all wagons together (not split yet), so we need to delete all existing wagons
-      // This ensures we don't have orphaned wagons from previous saves
-      // ✅ FIX: Use rake_serial_number only
-      await pool.query(
-        `DELETE FROM wagon_records 
-         WHERE rake_serial_number = $1`,
-        [rakeSerialNumber]
-      );
-      console.log(`[DRAFT SAVE] Deleted all wagons for rake_serial_number=${rakeSerialNumber} in multiple indent mode`);
+      // ✅ FIX: If saving a child record (specific indent), only delete wagons for THAT indent
+      if (indentNumberFromQuery && indentNumberFromQuery !== '') {
+        await pool.query(
+          `DELETE FROM wagon_records 
+           WHERE rake_serial_number = $1 AND indent_number = $2`,
+          [rakeSerialNumber, indentNumberFromQuery]
+        );
+        console.log(`[DRAFT SAVE] Deleted wagons for rake_serial_number=${rakeSerialNumber}, indent_number=${indentNumberFromQuery} (child record save)`);
+      } else {
+        // ✅ CRITICAL FIX: In multiple indent mode (parent), delete ALL wagons for this rake_serial_number
+        // During Save, we're saving all wagons together (not split yet), so we need to delete all existing wagons
+        // This ensures we don't have orphaned wagons from previous saves
+        // ✅ FIX: Use rake_serial_number only
+        await pool.query(
+          `DELETE FROM wagon_records 
+           WHERE rake_serial_number = $1`,
+          [rakeSerialNumber]
+        );
+        console.log(`[DRAFT SAVE] Deleted all wagons for rake_serial_number=${rakeSerialNumber} in multiple indent mode (parent save)`);
+      }
     }
 
     /* ===============================

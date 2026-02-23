@@ -1328,7 +1328,13 @@ function TrainEdit() {
         return wagonPayload;
       });
 
-      const res = await fetch(`${API_BASE}/train/${idToUrlParam(trainId)}/draft`, {
+      // ✅ FIX: Pass indent_number as query parameter if it exists
+      // This tells the backend we are saving a specific child record (not consolidating into parent)
+      const saveUrl = indentNumber
+        ? `${API_BASE}/train/${idToUrlParam(trainId)}/draft?indent_number=${encodeURIComponent(indentNumber)}`
+        : `${API_BASE}/train/${idToUrlParam(trainId)}/draft`;
+
+      const res = await fetch(saveUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

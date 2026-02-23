@@ -321,7 +321,7 @@ const saveCounting = async (req, res) => {
 
   try {
     const newStatus = inspection_completed ? 'COMPLETED' : 'IN_PROGRESS';
-    
+
     const updateFields = [];
     const values = [];
     let paramIndex = 1;
@@ -373,6 +373,142 @@ const saveCounting = async (req, res) => {
     await pool.query(query, values);
 
     res.json({ message: "Random counting details saved successfully" });
+
+    // ─── Notify admin, reviewer, super admin when random counting is completed ───
+    if (inspection_completed) {
+      (async () => {
+        try {
+          const { sendAlertEmail } = require("../services/emailService");
+          const { isValidEmail } = require("../utils/emailValidator");
+
+          const notifyUsersRes = await pool.query(
+            `SELECT u.email, u.username, u.role
+             FROM users u
+             WHERE u.role IN ('ADMIN', 'REVIEWER', 'SUPER_ADMIN')
+               AND u.is_active = true
+               AND u.email IS NOT NULL
+               AND u.email <> ''`
+          );
+
+          if (notifyUsersRes.rows.length === 0) {
+            console.log(`[RANDOM-COUNT-NOTIFY] No active users found to notify`);
+            return;
+          }
+
+          const validRecipients = notifyUsersRes.rows.filter(u => isValidEmail(u.email));
+          if (validRecipients.length === 0) {
+            console.log(`[RANDOM-COUNT-NOTIFY] No valid email addresses found`);
+            return;
+          }
+
+          // Fetch wagon details for the email (wagon_number, rake_serial_number)
+          const countingRecordRes = await pool.query(
+            `SELECT 
+               rake_serial_number,
+               wagon_number,
+               tower_number,
+               start_loaded_count,
+               start_unloaded_count,
+               inspected_loading_count,
+               inspected_unloading_count,
+               random_count_start_time
+             FROM random_counting_records
+             WHERE id = $1`,
+            [id]
+          );
+
+          const record = countingRecordRes.rows[0] || {};
+          const rakeSerial = record.rake_serial_number || train_id;
+          const wagonNum = record.wagon_number || wagon_number;
+          const towerNum = record.tower_number || "-";
+          const startLoaded = record.start_loaded_count ?? "-";
+          const startUnloaded = record.start_unloaded_count ?? "-";
+          const finalLoaded = inspected_loading_count ?? record.inspected_loading_count ?? "-";
+          const finalUnloaded = inspected_unloading_count ?? record.inspected_unloading_count ?? "-";
+          const startTime = record.random_count_start_time
+            ? new Date(record.random_count_start_time).toLocaleString()
+            : "-";
+
+          const recipientEmails = validRecipients.map(u => u.email);
+          const subject = `Random Counting Completed – Rake ${rakeSerial} / Wagon ${wagonNum}`;
+
+          const html = `
+            <div style="font-family:Arial,sans-serif;max-width:700px;">
+              <h2 style="color:#0B3A6E;">🔢 Random Counting Inspection Completed</h2>
+              <p>A random counting inspection has been completed and submitted.</p>
+
+              <table style="border-collapse:collapse;width:100%;margin:16px 0;">
+                <thead>
+                  <tr style="background:#0B3A6E;color:#fff;">
+                    <th style="padding:8px 12px;text-align:left;">Rake Serial</th>
+                    <th style="padding:8px 12px;text-align:left;">Wagon Number</th>
+                    <th style="padding:8px 12px;text-align:left;">Tower</th>
+                    <th style="padding:8px 12px;text-align:left;">Started At</th>
+                    <th style="padding:8px 12px;text-align:left;">Completed At</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${rakeSerial}</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${wagonNum}</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${towerNum}</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${startTime}</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${new Date().toLocaleString()}</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <table style="border-collapse:collapse;width:100%;margin:8px 0;">
+                <thead>
+                  <tr style="background:#0B3A6E;color:#fff;">
+                    <th style="padding:8px 12px;text-align:left;">Count Type</th>
+                    <th style="padding:8px 12px;text-align:left;">Starting Count</th>
+                    <th style="padding:8px 12px;text-align:left;">Inspected Count</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">Loaded Bags</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${startLoaded}</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${finalLoaded}</td>
+                  </tr>
+                  <tr style="background:#f9f9f9;">
+                    <td style="padding:8px 12px;border:1px solid #ddd;">Unloaded Bags</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${startUnloaded}</td>
+                    <td style="padding:8px 12px;border:1px solid #ddd;">${finalUnloaded}</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              ${(client_surveyor_name || bothra_surveyor_name || client_representative_name || remarks) ? `
+              <table style="border-collapse:collapse;width:100%;margin:8px 0;">
+                <thead>
+                  <tr style="background:#0B3A6E;color:#fff;">
+                    <th style="padding:8px 12px;text-align:left;">Field</th>
+                    <th style="padding:8px 12px;text-align:left;">Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${client_surveyor_name ? `<tr><td style="padding:8px 12px;border:1px solid #ddd;">Client Surveyor</td><td style="padding:8px 12px;border:1px solid #ddd;">${client_surveyor_name}</td></tr>` : ""}
+                  ${bothra_surveyor_name ? `<tr style="background:#f9f9f9;"><td style="padding:8px 12px;border:1px solid #ddd;">Bothra Surveyor</td><td style="padding:8px 12px;border:1px solid #ddd;">${bothra_surveyor_name}</td></tr>` : ""}
+                  ${client_representative_name ? `<tr><td style="padding:8px 12px;border:1px solid #ddd;">Client Representative</td><td style="padding:8px 12px;border:1px solid #ddd;">${client_representative_name}</td></tr>` : ""}
+                  ${remarks ? `<tr style="background:#f9f9f9;"><td style="padding:8px 12px;border:1px solid #ddd;">Remarks</td><td style="padding:8px 12px;border:1px solid #ddd;">${remarks}</td></tr>` : ""}
+                </tbody>
+              </table>` : ""}
+
+              <p style="color:#555;font-size:13px;">
+                Please log in to the system to view the full inspection report.
+              </p>
+            </div>
+          `;
+
+          await sendAlertEmail(recipientEmails, subject, html);
+          console.log(`[RANDOM-COUNT-NOTIFY] Completion email sent to ${recipientEmails.join(", ")} for rake ${rakeSerial}, wagon ${wagonNum}`);
+        } catch (emailErr) {
+          console.error(`[RANDOM-COUNT-NOTIFY] Failed to send random counting completion email:`, emailErr.message);
+        }
+      })();
+    }
   } catch (err) {
     console.error("RANDOM SAVE ERROR:", err);
     res.status(500).json({ message: "Failed to save random counting details" });
