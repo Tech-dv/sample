@@ -7,8 +7,22 @@
  *    (i.e. a rake transitions from 0 total loaded bags to ≥ 1).
  *    → Sends email to ADMIN, REVIEWER, SUPER_ADMIN.
  *
- * 2. "Wagon Loading Completed" – a specific wagon's loaded_bag_count
+ * 2. "Wagon 85% Threshold" – a specific wagon's loaded_bag_count reaches
+ *    85% or more of its wagon_to_be_loaded target (but is not yet complete).
+ *    → Sends email to ADMIN, REVIEWER, SUPER_ADMIN.
+ *
+ * 3. "Wagon Loading Completed" – a specific wagon's loaded_bag_count
  *    reaches its wagon_to_be_loaded target.
+ *    → Sends email to ADMIN, REVIEWER, SUPER_ADMIN.
+ *
+ * 4. "Loading Stoppage" – a wagon has started loading (loaded_bag_count > 0)
+ *    but its count has not incremented for ≥ 1 minute and has not yet reached
+ *    its wagon_to_be_loaded target.
+ *    → Sends email to ADMIN, REVIEWER, SUPER_ADMIN.
+ *    Alert clears automatically if loading resumes, allowing re-trigger.
+ *
+ * 5. "Underload / Overload at Door Closing" – when door_closing_datetime is
+ *    set on a dispatch record and the wagon's loaded count differs from target.
  *    → Sends email to ADMIN, REVIEWER, SUPER_ADMIN.
  */
 
@@ -17,7 +31,8 @@ const { sendAlertEmail } = require("./emailService");
 const { isValidEmail } = require("../utils/emailValidator");
 
 /* ───────── Configuration ───────── */
-const POLL_INTERVAL_MS = 30 * 1000; // 30 seconds (bag counts change frequently)
+const POLL_INTERVAL_MS = 10 * 1000; // 10 seconds (bag counts change frequently)
+const STOPPAGE_THRESHOLD_MS = 60 * 1000; // 1 minute without bag count change = stoppage
 
 /* ───────── In-memory state ───────── */
 
@@ -38,6 +53,15 @@ const wagonThresholdAlerted = new Set();
 // Set<"rakeSerial|indentNumber"> — keyed on rake+indent since door_closing is per dispatch record
 const doorClosingAlerted = new Set();
 
+// Track last-seen bag count and the timestamp when it last changed, per wagon.
+// Map<"rakeSerial|indentNumber|wagonNumber", { count: number, since: number }>
+const wagonCountSnapshot = new Map();
+
+// Track which wagons have already had a "Loading Stoppage" alert sent.
+// Cleared when loading resumes (count changes), so a second stoppage can re-trigger.
+// Set<"rakeSerial|indentNumber|wagonNumber">
+const wagonStoppageAlerted = new Set();
+
 // Whether this is the very first poll (used to seed state without alerting)
 let isFirstPoll = true;
 
@@ -55,6 +79,8 @@ const fetchWagonStates = async () => {
        w.tower_number,
        w.loaded_bag_count,
        w.wagon_to_be_loaded,
+       w.loading_status,
+       w.loading_status_manual_override,
        w.siding,
        d.customer_id,
        c.customer_name
@@ -297,6 +323,48 @@ const buildWagonThresholdHtml = (wagons) => {
   `;
 };
 
+const buildWagonStoppageHtml = (wagons) => {
+  const rows = wagons
+    .map(
+      (w) =>
+        `<tr>
+          <td style="padding:8px 12px;border:1px solid #ddd;">${w.rakeSerial}</td>
+          <td style="padding:8px 12px;border:1px solid #ddd;">${w.indentNumber || "-"}</td>
+          <td style="padding:8px 12px;border:1px solid #ddd;">${w.wagonNumber || "-"}</td>
+          <td style="padding:8px 12px;border:1px solid #ddd;color:#c0392b;"><strong>${w.loadedBagCount} / ${w.wagonToBeLoaded}</strong></td>
+          <td style="padding:8px 12px;border:1px solid #ddd;color:#c0392b;"><strong>${w.stoppedMinutes} min</strong></td>
+          <td style="padding:8px 12px;border:1px solid #ddd;">${w.customerName || "-"}</td>
+        </tr>`
+    )
+    .join("");
+
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:700px;">
+      <h2 style="color:#c0392b;">🛑 Wagon Loading Stoppage Detected</h2>
+      <p>The following wagon(s) have <strong>stopped loading</strong> for more than 1 minute without reaching their target bag count:</p>
+      <table style="border-collapse:collapse;width:100%;margin:16px 0;">
+        <thead>
+          <tr style="background:#0B3A6E;color:#fff;">
+            <th style="padding:8px 12px;text-align:left;">Rake Serial</th>
+            <th style="padding:8px 12px;text-align:left;">Indent Number</th>
+            <th style="padding:8px 12px;text-align:left;">Wagon Number</th>
+            <th style="padding:8px 12px;text-align:left;">Bags (Loaded / Target)</th>
+            <th style="padding:8px 12px;text-align:left;">Stopped For</th>
+            <th style="padding:8px 12px;text-align:left;">Customer</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+      <p style="color:#555;font-size:13px;">
+        Detected at: ${new Date().toLocaleString()}<br/>
+        Loading has stalled. Please investigate and resume loading for the above wagon(s).
+      </p>
+    </div>
+  `;
+};
+
 const buildWagonCompletedHtml = (wagons) => {
   const rows = wagons
     .map(
@@ -377,8 +445,38 @@ const pollLoadingStatuses = async () => {
           if (target > 0 && loaded >= target) {
             wagonCompletedAlerted.add(wagonKey);
             wagonThresholdAlerted.add(wagonKey);
+
+            // On startup, fix any wagons that are complete but still have loading_status=false
+            // (e.g. server restarted while frontend was updating, or legacy data).
+            // AND condition: condition_met=true AND manual_override=false → set true
+            // If user manually forced false (manual_override=true), leave it alone.
+            if (!w.loading_status && !w.loading_status_manual_override) {
+              pool.query(
+                `UPDATE wagon_records
+                 SET loading_status = true
+                 WHERE rake_serial_number = $1
+                   AND tower_number = $2
+                   AND (loading_status IS NULL OR loading_status = false)
+                   AND loading_status_manual_override = false`,
+                [w.rake_serial_number, w.tower_number]
+              ).then(() => {
+                console.log(
+                  `[LOADING-ALERT] Startup fix: set loading_status=true for rake "${w.rake_serial_number}", tower ${w.tower_number} (${loaded}/${target})`
+                );
+              }).catch(err => {
+                console.error(
+                  `[LOADING-ALERT] Startup fix failed for rake "${w.rake_serial_number}", tower ${w.tower_number}:`,
+                  err.message
+                );
+              });
+            }
           } else if (target > 0 && loaded >= target * 0.85) {
             wagonThresholdAlerted.add(wagonKey);
+          }
+
+          // Seed stoppage snapshot for wagons actively loading (loaded > 0 but not yet complete)
+          if (loaded > 0 && target > 0 && loaded < target) {
+            wagonCountSnapshot.set(wagonKey, { count: loaded, since: Date.now() });
           }
         }
       }
@@ -407,6 +505,7 @@ const pollLoadingStatuses = async () => {
     const newLoadingStarted = [];
     const newWagonThreshold = [];
     const newWagonCompleted = [];
+    const newWagonStoppage = [];
     const newDoorClosingUnderload = [];
     const newDoorClosingOverload = [];
 
@@ -464,19 +563,89 @@ const pollLoadingStatuses = async () => {
         }
 
         // ─── 2b. Wagon fully completed ───
-        if (loaded >= target && !wagonCompletedAlerted.has(wagonKey)) {
-          wagonCompletedAlerted.add(wagonKey);
-          newWagonCompleted.push({
-            rakeSerial: w.rake_serial_number,
-            indentNumber: w.indent_number,
-            wagonNumber: w.wagon_number,
-            loadedBagCount: loaded,
-            wagonToBeLoaded: target,
-            customerName: w.customer_name,
-          });
-          console.log(
-            `[LOADING-ALERT] Wagon completed: rake "${w.rake_serial_number}", wagon "${w.wagon_number || w.tower_number}" (${loaded}/${target})`
-          );
+        if (loaded >= target) {
+          // Auto-set loading_status=true in DB when:
+          //   condition_met=true  AND  manual_override=false
+          // i.e. true AND true → update to true
+          // If user manually forced false (manual_override=true):
+          //   condition_met=true  AND  manual_override=true → skip (leave as false)
+          if (!w.loading_status && !w.loading_status_manual_override) {
+            pool.query(
+              `UPDATE wagon_records
+               SET loading_status = true
+               WHERE rake_serial_number = $1
+                 AND tower_number = $2
+                 AND (loading_status IS NULL OR loading_status = false)
+                 AND loading_status_manual_override = false`,
+              [w.rake_serial_number, w.tower_number]
+            ).then(() => {
+              console.log(
+                `[LOADING-ALERT] Auto-set loading_status=true for rake "${w.rake_serial_number}", tower ${w.tower_number} (${loaded}/${target})`
+              );
+            }).catch(err => {
+              console.error(
+                `[LOADING-ALERT] Failed to auto-set loading_status for rake "${w.rake_serial_number}", tower ${w.tower_number}:`,
+                err.message
+              );
+            });
+          }
+
+          if (!wagonCompletedAlerted.has(wagonKey)) {
+            wagonCompletedAlerted.add(wagonKey);
+            newWagonCompleted.push({
+              rakeSerial: w.rake_serial_number,
+              indentNumber: w.indent_number,
+              wagonNumber: w.wagon_number,
+              loadedBagCount: loaded,
+              wagonToBeLoaded: target,
+              customerName: w.customer_name,
+            });
+            console.log(
+              `[LOADING-ALERT] Wagon completed: rake "${w.rake_serial_number}", wagon "${w.wagon_number || w.tower_number}" (${loaded}/${target})`
+            );
+          }
+        }
+
+        // ─── 2c. Loading Stoppage detection ───
+        // Fires when a wagon has started loading (loaded > 0) but has NOT yet
+        // reached its target AND its bag count has not changed for ≥ 1 minute.
+        if (loaded > 0 && loaded < target) {
+          const snapshot = wagonCountSnapshot.get(wagonKey);
+          const now = Date.now();
+
+          if (!snapshot) {
+            // First time we see this wagon in an active state — initialise snapshot
+            wagonCountSnapshot.set(wagonKey, { count: loaded, since: now });
+          } else if (loaded !== snapshot.count) {
+            // Count has changed — update snapshot and clear any prior stoppage alert
+            // so that a future re-stoppage can fire again
+            wagonCountSnapshot.set(wagonKey, { count: loaded, since: now });
+            if (wagonStoppageAlerted.has(wagonKey)) {
+              wagonStoppageAlerted.delete(wagonKey);
+              console.log(
+                `[LOADING-ALERT] Loading resumed after stoppage: rake "${w.rake_serial_number}", wagon "${w.wagon_number || w.tower_number}" (new count: ${loaded})`
+              );
+            }
+          } else {
+            // Count unchanged — check if threshold exceeded and alert not yet sent
+            const stoppedForMs = now - snapshot.since;
+            if (stoppedForMs >= STOPPAGE_THRESHOLD_MS && !wagonStoppageAlerted.has(wagonKey)) {
+              wagonStoppageAlerted.add(wagonKey);
+              const stoppedMinutes = Math.floor(stoppedForMs / 60000);
+              newWagonStoppage.push({
+                rakeSerial: w.rake_serial_number,
+                indentNumber: w.indent_number,
+                wagonNumber: w.wagon_number || `Tower ${w.tower_number}`,
+                loadedBagCount: loaded,
+                wagonToBeLoaded: target,
+                stoppedMinutes,
+                customerName: w.customer_name,
+              });
+              console.log(
+                `[LOADING-ALERT] Loading stoppage detected: rake "${w.rake_serial_number}", wagon "${w.wagon_number || w.tower_number}" – count stuck at ${loaded}/${target} for ${stoppedMinutes} min`
+              );
+            }
+          }
         }
       }
     }
@@ -536,6 +705,7 @@ const pollLoadingStatuses = async () => {
       newLoadingStarted.length === 0 &&
       newWagonThreshold.length === 0 &&
       newWagonCompleted.length === 0 &&
+      newWagonStoppage.length === 0 &&
       newDoorClosingUnderload.length === 0 &&
       newDoorClosingOverload.length === 0
     ) {
@@ -572,6 +742,16 @@ const pollLoadingStatuses = async () => {
     if (newWagonCompleted.length > 0) {
       const subject = `Wagon Loading Completed: ${newWagonCompleted.length} wagon(s) finished`;
       const html = buildWagonCompletedHtml(newWagonCompleted);
+      await sendAlertEmail(recipients, subject, html);
+    }
+
+    // Send "Loading Stoppage" email (batch all stalled wagons into one email)
+    if (newWagonStoppage.length > 0) {
+      console.log(
+        `[LOADING-ALERT] ${newWagonStoppage.length} wagon(s) stalled – sending stoppage alert email`
+      );
+      const subject = `🛑 Wagon Loading Stoppage – ${newWagonStoppage.length} wagon(s) stalled`;
+      const html = buildWagonStoppageHtml(newWagonStoppage);
       await sendAlertEmail(recipients, subject, html);
     }
 

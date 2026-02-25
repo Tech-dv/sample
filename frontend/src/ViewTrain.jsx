@@ -467,9 +467,32 @@ function ViewTrain() {
                         <div style={activityTimelineStyles.date}>{dateGroup.date}</div>
                         <div style={activityTimelineStyles.activitiesList}>
                           {dateGroup.activities.map((activity, actIndex) => {
-                            // ✅ FIX: Hide REVIEWER_EDITED activities (these are rake/dispatch changes, shown only in Excel)
+                            const formatActivityTime = (timestamp) => {
+                              if (!timestamp) return '';
+                              const date = new Date(timestamp);
+                              return date.toLocaleString('en-US', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit',
+                                hour12: false
+                              });
+                            };
+
+                            // Show REVIEWER_EDITED activities as "Reviewer made changes in rake details"
                             if (activity.activity_type === 'REVIEWER_EDITED') {
-                              return null; // Hide rake/dispatch changes from timeline
+                              return (
+                                <div key={actIndex} style={activityTimelineStyles.activityItem}>
+                                  <span style={activityTimelineStyles.bullet}>•</span>
+                                  <div style={{ flex: 1 }}>
+                                    <div style={activityTimelineStyles.text}>
+                                      Reviewer made changes in rake details: {formatActivityTime(activity.timestamp)}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
                             }
 
                             // ✅ FIX: Only show REVIEWER_TRAIN_EDITED if it has wagon changes
@@ -484,26 +507,12 @@ function ViewTrain() {
                                 return null; // Hide activities that only have rake changes
                               }
 
-                              const formatTime = (timestamp) => {
-                                if (!timestamp) return '';
-                                const date = new Date(timestamp);
-                                return date.toLocaleString('en-US', {
-                                  year: 'numeric',
-                                  month: '2-digit',
-                                  day: '2-digit',
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                  second: '2-digit',
-                                  hour12: false
-                                });
-                              };
-
                               return (
                                 <div key={actIndex} style={activityTimelineStyles.activityItem}>
                                   <span style={activityTimelineStyles.bullet}>•</span>
                                   <div style={{ flex: 1 }}>
                                     <div style={activityTimelineStyles.text}>
-                                      Reviewer made changes in wagon: {formatTime(activity.timestamp)}
+                                      Reviewer made changes in wagon: {formatActivityTime(activity.timestamp)}
                                     </div>
                                   </div>
                                 </div>

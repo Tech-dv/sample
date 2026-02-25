@@ -468,6 +468,27 @@ const saveDraft = async (req, res) => {
   const singleIndent = editOptions?.singleIndent !== undefined ? editOptions.singleIndent : true;
   const hlOnly = editOptions?.wagonTypeHL !== undefined ? editOptions.wagonTypeHL : false;
 
+  // ✅ FIX: Resolve a reliable customer_id for both parent and child saves
+  // Priority:
+  // 1. header.customer_id from frontend payload (explicit choice)
+  // 2. Any wagon.customer_id from current wagons payload (per-indent/customer in multiple-indent mode)
+  // 3. Fallback to null (no customer mapped)
+  const getEffectiveCustomerId = () => {
+    if (header && header.customer_id !== undefined && header.customer_id !== null && header.customer_id !== "") {
+      return header.customer_id;
+    }
+    if (Array.isArray(wagons)) {
+      const wagonWithCustomer = wagons.find(
+        (w) => w && w.customer_id !== undefined && w.customer_id !== null && w.customer_id !== ""
+      );
+      if (wagonWithCustomer) {
+        return wagonWithCustomer.customer_id;
+      }
+    }
+    return null;
+  };
+  const effectiveCustomerId = getEffectiveCustomerId();
+
   // ✅ FIX: Resolve rakeSerialNumber FIRST before fetching existing data for comparison
   // ✅ FIX: URL trainId is now always rake_serial_number
   // No need to resolve - use it directly
@@ -603,12 +624,16 @@ const saveDraft = async (req, res) => {
       // Check if train already has sequential serials flag, assigned_reviewer, and status (before delete)
       // ✅ FIX: Search for base rake_serial_number OR sequential rake_serial_number to preserve assignment
       // This handles cases where the task was assigned and might be using a sequential serial number
+      // ✅ FIX: Do NOT filter by indent_number IS NULL here — the task may have been assigned with
+      // a non-empty indent_number (e.g. single-indent mode where header.indent_number is filled).
+      // We must find the record regardless of indent_number to preserve assigned_reviewer and status.
       const existingRecordData = await pool.query(
         `SELECT has_sequential_serials, assigned_reviewer, status, rake_serial_number 
          FROM dashboard_records 
          WHERE (rake_serial_number = $1 OR rake_serial_number LIKE $2)
-         AND (indent_number IS NULL OR indent_number = '')
-         ORDER BY CASE WHEN rake_serial_number = $1 THEN 0 ELSE 1 END
+         ORDER BY CASE WHEN rake_serial_number = $1 THEN 0 ELSE 1 END,
+                  CASE WHEN assigned_reviewer IS NOT NULL AND assigned_reviewer != '' THEN 0 ELSE 1 END,
+                  CASE WHEN status IN ('LOADING_IN_PROGRESS', 'PENDING_APPROVAL') THEN 0 ELSE 1 END
          LIMIT 1`,
         [rakeSerialNumber, `${rakeSerialNumber}-%`]
       );
@@ -645,7 +670,7 @@ const saveDraft = async (req, res) => {
         [
           actualRakeSerialNumber, // ✅ FIX: Use actual rake_serial_number (might be sequential)
           header?.indent_number || null,
-          header?.customer_id || null,
+          effectiveCustomerId,
           firstCommodity,
           firstWagonDestination,
           statusToUse,
@@ -680,7 +705,7 @@ const saveDraft = async (req, res) => {
                multiple_indent_confirmed = TRUE
            WHERE rake_serial_number = $5 AND indent_number = $6`,
           [
-            header?.customer_id || null,
+            effectiveCustomerId,
             wagons.find(w => w.commodity)?.commodity || null,
             wagons.find(w => w.wagon_destination)?.wagon_destination || null,
             hlOnly,
@@ -694,11 +719,14 @@ const saveDraft = async (req, res) => {
         // This ensures all wagons stay together until user explicitly chooses to split
 
         // Check if train already has sequential serials flag (before any operations)
+        // ✅ FIX: Do NOT filter by indent_number IS NULL — the task may have been assigned with a
+        // non-empty indent_number. Prioritise rows with an active status and assigned_reviewer.
         const existingRecordData = await pool.query(
           `SELECT has_sequential_serials, siding, created_time, assigned_reviewer, status 
            FROM dashboard_records 
-           WHERE rake_serial_number = $1 
-           AND (indent_number IS NULL OR indent_number = '')
+           WHERE rake_serial_number = $1
+           ORDER BY CASE WHEN assigned_reviewer IS NOT NULL AND assigned_reviewer != '' THEN 0 ELSE 1 END,
+                    CASE WHEN status IN ('LOADING_IN_PROGRESS', 'PENDING_APPROVAL') THEN 0 ELSE 1 END
            LIMIT 1`,
           [rakeSerialNumber]
         );
@@ -1110,6 +1138,7 @@ const saveDraft = async (req, res) => {
         stoppage_time,
         remarks,
         loading_status,
+        loading_status_manual_override,
         indent_number,
         wagon_destination,
         commodity,
@@ -1118,7 +1147,7 @@ const saveDraft = async (req, res) => {
         siding
       )
       VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
       )
       `,
         [
@@ -1143,6 +1172,7 @@ const saveDraft = async (req, res) => {
           w.stoppage_time || 0,
           w.remarks || null,
           loadingStatus,
+          Boolean(w.loading_status_manual_override), // Preserve manual override flag across saves
           w.indent_number || header?.indent_number || null,
           w.wagon_destination || null,
           w.commodity || null,
@@ -1867,9 +1897,54 @@ const getDispatch = async (req, res) => {
       headerParams = [rakeSerialNumber];
     }
 
-    const headerRes = await pool.query(headerQuery, headerParams);
+    // Start with primary lookup
+    let headerRes = await pool.query(headerQuery, headerParams);
+
+    // ✅ ROBUSTNESS: graceful fallbacks instead of immediate 404
+    // 1) If we requested a specific indent_number but found nothing,
+    //    fall back to the "parent" dashboard record for this rake_serial_number
+    //    (the row with NULL/empty indent_number, or the first by indent_number).
+    if (headerRes.rows.length === 0 && indentNumber) {
+      console.warn(
+        `[GET DISPATCH] No dashboard record for rake_serial_number=${rakeSerialNumber} and indent_number=${indentNumber}. Falling back to parent record.`
+      );
+
+      const fallbackParentQuery = `
+        SELECT siding, indent_number, rake_serial_number 
+        FROM dashboard_records 
+        WHERE rake_serial_number = $1
+        ORDER BY 
+          CASE WHEN indent_number IS NULL OR indent_number = '' THEN 0 ELSE 1 END,
+          indent_number
+        LIMIT 1
+      `;
+      headerRes = await pool.query(fallbackParentQuery, [rakeSerialNumber]);
+    }
+
+    // 2) If still nothing and this looks like a child serial (e.g. 2024-25/01/001-1),
+    //    try the base/parent rake_serial_number (without the "-N" suffix).
+    if (headerRes.rows.length === 0 && rakeSerialNumber.match(/^(.+\/\d+\/\d+)-(\d+)$/)) {
+      const parentTrainId = rakeSerialNumber.replace(/-(\d+)$/, "");
+      console.warn(
+        `[GET DISPATCH] No dashboard record for child rake_serial_number=${rakeSerialNumber}. Trying parent=${parentTrainId}.`
+      );
+
+      const parentHeaderQuery = `
+        SELECT siding, indent_number, rake_serial_number 
+        FROM dashboard_records 
+        WHERE rake_serial_number = $1
+        ORDER BY 
+          CASE WHEN indent_number IS NULL OR indent_number = '' THEN 0 ELSE 1 END,
+          indent_number
+        LIMIT 1
+      `;
+      headerRes = await pool.query(parentHeaderQuery, [parentTrainId]);
+    }
 
     if (headerRes.rows.length === 0) {
+      console.error(
+        `[GET DISPATCH] No dashboard_records found for rake_serial_number=${rakeSerialNumber} (or parent) and indent_number=${indentNumber || "none"}`
+      );
       return res.status(404).json({ message: "Train not found" });
     }
 
@@ -2444,8 +2519,10 @@ const saveDispatchDraft = async (req, res) => {
         `${c.field}: "${c.oldValue}" → "${c.newValue}"`
       ).join("; ");
 
+      // ✅ FIX: Use rakeSerialNumber (decoded, with slashes) not trainId (URL param with underscores)
+      // exportAllReviewerChanges queries by rake_serial_number with slashes, so they must match
       await addActivityTimelineEntry(
-        trainId,
+        rakeSerialNumber,
         indentNumber || null,
         'REVIEWER_EDITED',
         reviewerUsername,

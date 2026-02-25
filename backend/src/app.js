@@ -18,6 +18,8 @@ const dropdownRoutes = require("./routes/dropdownRoutes");
 
 const app = express();
 
+require("./services/haulOutAlertService");
+
 // Middleware
 app.use(cors());
 app.use(express.json());

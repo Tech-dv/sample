@@ -8,6 +8,7 @@ import DraftSavePopup from "./components/DraftSavePopup";
 import MultipleRakeSerialPopup from "./components/MultipleRakeSerialPopup";
 import CancelPopup from "./components/CancelPopup";
 import WarningPopup from "./components/WarningPopup";
+import DeleteConfirmPopup from "./components/DeleteConfirmPopup";
 import { idToUrlParam, urlParamToId } from "./utils/trainIdUtils";
 
 
@@ -76,6 +77,8 @@ function ReviewerVerify() {
   const [showCancelPopup, setShowCancelPopup] = useState(false);
   const [cancelRemarks, setCancelRemarks] = useState("");
   const [warning, setWarning] = useState({ open: false, message: "", title: "Warning" });
+  const [showToggleWarning, setShowToggleWarning] = useState(false);
+  const [pendingToggleIndex, setPendingToggleIndex] = useState(null);
 
   /* ================= EDIT OPTIONS FROM POPUP ================= */
   const [editOptions, setEditOptions] = useState({
@@ -509,21 +512,34 @@ function ReviewerVerify() {
   const toggleStatus = async (index) => {
     const updated = [...wagons];
     const wagon = updated[index];
-
     const newStatus = !wagon.loading_status;
-    wagon.loading_status = newStatus;
 
+    // Calculate if condition is met (loaded_bag_count >= wagon_to_be_loaded)
+    const wagonToBeLoadedValue = wagon.wagon_to_be_loaded != null ? String(wagon.wagon_to_be_loaded) : "";
+    const wagonToBeLoaded = wagonToBeLoadedValue && wagonToBeLoadedValue.trim() !== ""
+      ? Number(wagonToBeLoadedValue)
+      : null;
+    const loadedBagCount = Number(wagon.loaded_bag_count) || 0;
+    const conditionMet = wagonToBeLoaded != null && loadedBagCount >= wagonToBeLoaded;
+
+    // If user is trying to set status to false when condition is met, show warning popup
+    if (newStatus === false && conditionMet) {
+      setPendingToggleIndex(index);
+      setShowToggleWarning(true);
+      return;
+    }
+
+    // Proceed with toggle – update local state and write to DB immediately
+    wagon.loading_status = newStatus;
     setWagons(updated);
     setIsSaved(false);
 
-    // ✅ FIX: Track that this wagon was manually toggled
+    // Track manually toggled wagons
     setManuallyToggledWagons(prev => {
       const newSet = new Set(prev);
       if (newStatus) {
-        // User manually set to true - track it
         newSet.add(wagon.tower_number);
       } else {
-        // User manually set to false - remove from tracking (will be recalculated)
         newSet.delete(wagon.tower_number);
       }
       return newSet;
@@ -547,6 +563,56 @@ function ReviewerVerify() {
     } catch (err) {
       console.error("Failed to toggle wagon status", err);
     }
+  };
+
+  // Handle confirmation when user wants to set status to false even though condition is met
+  const handleToggleWarningYes = async () => {
+    if (pendingToggleIndex === null) {
+      setShowToggleWarning(false);
+      return;
+    }
+
+    const updated = [...wagons];
+    const wagon = updated[pendingToggleIndex];
+
+    // Set status to false
+    wagon.loading_status = false;
+    setWagons(updated);
+    setIsSaved(false);
+
+    // Track as manually toggled (remove from set since it's now false)
+    setManuallyToggledWagons(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(wagon.tower_number);
+      return newSet;
+    });
+
+    try {
+      await fetch(
+        `${API_BASE}/wagon/${idToUrlParam(trainId)}/${wagon.tower_number}/status`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "x-user-role": role,
+            "x-reviewer-username": reviewerUsername || "",
+          },
+          body: JSON.stringify({
+            loading_status: false,
+          }),
+        }
+      );
+    } catch (err) {
+      console.error("Failed to toggle wagon status", err);
+    }
+
+    setShowToggleWarning(false);
+    setPendingToggleIndex(null);
+  };
+
+  const handleToggleWarningNo = () => {
+    setShowToggleWarning(false);
+    setPendingToggleIndex(null);
   };
 
   /* ================= SEAL NUMBER HANDLERS ================= */
@@ -816,7 +882,13 @@ function ReviewerVerify() {
         return wagonPayload;
       });
 
-      const res = await fetch(`${API_BASE}/train/${idToUrlParam(trainId)}/draft`, {
+      // ✅ FIX: Pass indent_number as query param so backend correctly identifies child records
+      // Without this, backend treats every save as a parent record and wipes indent_number + assignment
+      const draftUrl = indentNumber
+        ? `${API_BASE}/train/${idToUrlParam(trainId)}/draft?indent_number=${encodeURIComponent(indentNumber)}`
+        : `${API_BASE}/train/${idToUrlParam(trainId)}/draft`;
+
+      const res = await fetch(draftUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1503,7 +1575,7 @@ function ReviewerVerify() {
           <div style={{ display: "flex", gap: "10px" }}>
             <button
               style={getButtonStyle("cancel")}
-              onClick={() => navigate("/dashboard")}
+              onClick={() => navigate("/task-view")}
             >
               Cancel
             </button>
@@ -1545,6 +1617,13 @@ function ReviewerVerify() {
           onClose={() => setWarning({ open: false, message: "", title: "Warning" })}
           message={warning.message}
           title={warning.title}
+        />
+        <DeleteConfirmPopup
+          open={showToggleWarning}
+          onClose={handleToggleWarningNo}
+          onYes={handleToggleWarningYes}
+          onNo={handleToggleWarningNo}
+          message="The loading condition is met (Loaded Bag Count >= Bags To Be Loaded). Do you still want to set Loading Completed to false?"
         />
       </div>
     </AppShell>
