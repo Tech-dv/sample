@@ -995,103 +995,174 @@ export default function DispatchPage() {
           </div>
 
           {/* Right: Activity Timeline */}
-          <div style={activityTimeline.container}>
-            <div style={activityTimeline.header}>Activity Timeline</div>
-            <div style={activityTimeline.content}>
-              {activities.length > 0 ? (
-                activities.map((dateGroup, index) => (
-                  <div key={index} style={activityTimeline.dateGroup}>
-                    <div style={activityTimeline.date}>{dateGroup.date}</div>
-                    <div style={activityTimeline.activitiesList}>
-                      {dateGroup.activities.map((activity, actIndex) => {
-                        const formattedText = formatActivityText(activity.text);
-                        return (
-                          <div key={actIndex} style={activityTimeline.activityItem}>
-                            <span style={activityTimeline.bullet}>•</span>
-                            <span style={activityTimeline.text}>{formattedText}</span>
-                          </div>
-                        );
-                      })}
+            <div style={activityTimeline.container}>
+              <div style={activityTimeline.header}>Activity Timeline</div>
+              <div style={activityTimeline.content}>
+                {activities.length > 0 ? (
+                  activities.map((dateGroup, index) => (
+                    <div key={index} style={activityTimeline.dateGroup}>
+                      <div style={activityTimeline.date}>{dateGroup.date}</div>
+                      <div style={activityTimeline.activitiesList}>
+                        {dateGroup.activities.map((activity, actIndex) => {
+                          const formatActivityTime = (timestamp) => {
+                            if (!timestamp) return "";
+                            const date = new Date(timestamp);
+                            return date.toLocaleString("en-US", {
+                              year: "numeric",
+                              month: "2-digit",
+                              day: "2-digit",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              second: "2-digit",
+                              hour12: false,
+                            });
+                          };
+
+                          // Show REVIEWER_EDITED activities as "Reviewer made changes in rake details"
+                          if (activity.activity_type === "REVIEWER_EDITED") {
+                            return (
+                              <div key={actIndex} style={activityTimeline.activityItem}>
+                                <span style={activityTimeline.bullet}>•</span>
+                                <div style={{ flex: 1 }}>
+                                  <div style={activityTimeline.text}>
+                                    Reviewer made changes in rake details:{" "}
+                                    {formatActivityTime(activity.timestamp)}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          // Only show REVIEWER_TRAIN_EDITED if it has wagon changes
+                          if (
+                            activity.activity_type === "REVIEWER_TRAIN_EDITED" &&
+                            activity.changeDetails
+                          ) {
+                            const hasWagonChanges =
+                              activity.changeDetails.wagonChanges &&
+                              activity.changeDetails.wagonChanges.length > 0;
+
+                            // Only show if there are wagon changes
+                            if (!hasWagonChanges) {
+                              return null;
+                            }
+
+                            return (
+                              <div key={actIndex} style={activityTimeline.activityItem}>
+                                <span style={activityTimeline.bullet}>•</span>
+                                <div style={{ flex: 1 }}>
+                                  <div style={activityTimeline.text}>
+                                    Reviewer made changes in wagon:{" "}
+                                    {formatActivityTime(activity.timestamp)}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          const formattedText = formatActivityText(activity.text);
+                          return (
+                            <div key={actIndex} style={activityTimeline.activityItem}>
+                              <span style={activityTimeline.bullet}>•</span>
+                              <span style={activityTimeline.text}>{formattedText}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
+                  ))
+                ) : (
+                  <div style={activityTimeline.item}>
+                    <div style={activityTimeline.date}>-</div>
+                    <div style={activityTimeline.text}>No activity recorded yet.</div>
                   </div>
-                ))
-              ) : (
-                <div style={activityTimeline.item}>
-                  <div style={activityTimeline.date}>-</div>
-                  <div style={activityTimeline.text}>
-                    No activity recorded yet.
-                  </div>
-                </div>
-              )}
+                )}
 
-              {/* Download button - only show after reviewer submits (APPROVED) and has reviewer edits */}
-              {isApproved && hasReviewerEdits && (
-                <div style={{ padding: "16px", borderTop: "1px solid #eee", backgroundColor: "#f9f9f9" }}>
-                  <button
-                    onClick={async () => {
-                      try {
-                        const role = localStorage.getItem("role");
-                        const url = `${API_BASE}/train/${idToUrlParam(trainId)}/export-all-reviewer-changes`;
-
-                        const response = await fetch(url, {
-                          headers: {
-                            "x-user-role": role || "ADMIN",
-                          },
-                        });
-
-                        if (!response.ok) {
-                          const errorData = await response.json().catch(() => ({ message: "Download failed" }));
-                          setWarning({ open: true, message: errorData.message || "Failed to download Excel file", title: "Error" });
-                          return;
-                        }
-
-                        // Get the blob from response
-                        const blob = await response.blob();
-
-                        // Format filename from rake_serial_number
-                        // Format: {year-part}_{month-short}_{serial-part}_changes.xlsx
-                        // Example: "2025-26/02/001" -> "2025-26_feb_001_changes.xlsx"
-                        const filename = formatRakeSerialFilename(rakeSerialNumber || trainId);
-
-                        // Create a temporary URL for the blob
-                        const blobUrl = window.URL.createObjectURL(blob);
-
-                        // Create a temporary anchor element and trigger download
-                        const link = document.createElement('a');
-                        link.href = blobUrl;
-                        link.download = filename;
-                        document.body.appendChild(link);
-                        link.click();
-
-                        // Clean up
-                        document.body.removeChild(link);
-                        window.URL.revokeObjectURL(blobUrl);
-                      } catch (err) {
-                        console.error("Download error:", err);
-                        setWarning({ open: true, message: "Failed to download Excel file. Please try again.", title: "Error" });
-                      }
-                    }}
+                {/* Download button - only show after reviewer submits (APPROVED) and has reviewer edits */}
+                {isApproved && hasReviewerEdits && (
+                  <div
                     style={{
-                      width: "100%",
-                      padding: "10px 16px",
-                      backgroundColor: "#4CAF50",
-                      color: "white",
-                      border: "none",
-                      borderRadius: "4px",
-                      cursor: "pointer",
-                      fontSize: "14px",
-                      fontWeight: "600",
-                      transition: "background-color 0.2s",
+                      padding: "16px",
+                      borderTop: "1px solid #eee",
+                      backgroundColor: "#f9f9f9",
                     }}
-                    onMouseOver={(e) => e.target.style.backgroundColor = "#45a049"}
-                    onMouseOut={(e) => e.target.style.backgroundColor = "#4CAF50"}
                   >
-                    Download All Reviewer Changes (Excel)
-                  </button>
-                </div>
-              )}
+                    <button
+                      onClick={async () => {
+                        try {
+                          const role = localStorage.getItem("role");
+                          const url = `${API_BASE}/train/${idToUrlParam(
+                            trainId
+                          )}/export-all-reviewer-changes`;
+
+                          const response = await fetch(url, {
+                            headers: {
+                              "x-user-role": role || "ADMIN",
+                            },
+                          });
+
+                          if (!response.ok) {
+                            const errorData = await response
+                              .json()
+                              .catch(() => ({ message: "Download failed" }));
+                            setWarning({
+                              open: true,
+                              message:
+                                errorData.message ||
+                                "Failed to download Excel file",
+                              title: "Error",
+                            });
+                            return;
+                          }
+
+                          const blob = await response.blob();
+                          const filename = formatRakeSerialFilename(
+                            rakeSerialNumber || trainId
+                          );
+
+                          const blobUrl = window.URL.createObjectURL(blob);
+                          const link = document.createElement("a");
+                          link.href = blobUrl;
+                          link.download = filename;
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                          window.URL.revokeObjectURL(blobUrl);
+                        } catch (err) {
+                          console.error("Download error:", err);
+                          setWarning({
+                            open: true,
+                            message:
+                              "Failed to download Excel file. Please try again.",
+                            title: "Error",
+                          });
+                        }
+                      }}
+                      style={{
+                        width: "100%",
+                        padding: "10px 16px",
+                        backgroundColor: "#4CAF50",
+                        color: "white",
+                        border: "none",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        fontSize: "14px",
+                        fontWeight: "600",
+                        transition: "background-color 0.2s",
+                      }}
+                      onMouseOver={(e) =>
+                        (e.target.style.backgroundColor = "#45a049")
+                      }
+                      onMouseOut={(e) =>
+                        (e.target.style.backgroundColor = "#4CAF50")
+                      }
+                    >
+                      Download All Reviewer Changes (Excel)
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
         </div>
 
         {/* Bottom: Last row with 4 columns */}

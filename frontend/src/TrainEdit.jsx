@@ -671,10 +671,10 @@ function TrainEdit() {
     if (newStatus === false) {
       // User manually set to false – track so auto-refresh doesn't overwrite it
       setManuallyToggledFalseWagons(prev => {
-        const newSet = new Set(prev);
-        newSet.add(wagon.tower_number);
-        return newSet;
-      });
+      const newSet = new Set(prev);
+      newSet.add(wagon.tower_number);
+      return newSet;
+    });
     } else {
       // User manually set to true – clear the false-override flag
       setManuallyToggledFalseWagons(prev => {

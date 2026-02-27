@@ -591,18 +591,18 @@ const pollLoadingStatuses = async () => {
           }
 
           if (!wagonCompletedAlerted.has(wagonKey)) {
-            wagonCompletedAlerted.add(wagonKey);
-            newWagonCompleted.push({
-              rakeSerial: w.rake_serial_number,
-              indentNumber: w.indent_number,
-              wagonNumber: w.wagon_number,
-              loadedBagCount: loaded,
-              wagonToBeLoaded: target,
-              customerName: w.customer_name,
-            });
-            console.log(
-              `[LOADING-ALERT] Wagon completed: rake "${w.rake_serial_number}", wagon "${w.wagon_number || w.tower_number}" (${loaded}/${target})`
-            );
+          wagonCompletedAlerted.add(wagonKey);
+          newWagonCompleted.push({
+            rakeSerial: w.rake_serial_number,
+            indentNumber: w.indent_number,
+            wagonNumber: w.wagon_number,
+            loadedBagCount: loaded,
+            wagonToBeLoaded: target,
+            customerName: w.customer_name,
+          });
+          console.log(
+            `[LOADING-ALERT] Wagon completed: rake "${w.rake_serial_number}", wagon "${w.wagon_number || w.tower_number}" (${loaded}/${target})`
+          );
           }
         }
 

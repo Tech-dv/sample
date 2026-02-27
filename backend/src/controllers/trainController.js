@@ -724,7 +724,7 @@ const saveDraft = async (req, res) => {
         const existingRecordData = await pool.query(
           `SELECT has_sequential_serials, siding, created_time, assigned_reviewer, status 
            FROM dashboard_records 
-           WHERE rake_serial_number = $1
+           WHERE rake_serial_number = $1 
            ORDER BY CASE WHEN assigned_reviewer IS NOT NULL AND assigned_reviewer != '' THEN 0 ELSE 1 END,
                     CASE WHEN status IN ('LOADING_IN_PROGRESS', 'PENDING_APPROVAL') THEN 0 ELSE 1 END
            LIMIT 1`,
@@ -750,17 +750,28 @@ const saveDraft = async (req, res) => {
         );
         const multipleIndentConfirmed = !singleIndent && hasIndentNumbers;
 
+        // ✅ CRITICAL BEHAVIOR:
+        // For the PARENT node (no indentNumberFromQuery), Save must NEVER split the parent
+        // into per-indent dashboard records. There should always be exactly ONE parent
+        // dashboard_records row (indent_number NULL/empty) until the user clicks Proceed
+        // and answers the multiple rake serial number question (Yes/No).
+        //
+        // Splitting logic:
+        //   - "Yes" (multiple rake serial = yes)  → handled by generateMultipleRakeSerial
+        //   - "No"  (multiple rake serial = no)   → handled by markSerialHandled
+        // Both are called from the Proceed popup, NOT from Save.
+
         // Delete ALL dashboard records for this rake_serial_number (including any that were split)
-        // This ensures we start fresh with a single parent record during Save
+        // This ensures we start fresh with a single parent record during Save.
         await pool.query(
           `DELETE FROM dashboard_records 
            WHERE (rake_serial_number = $1 OR rake_serial_number LIKE $2)`,
           [rakeSerialNumber, `${rakeSerialNumber}-%`]
         );
-        console.log(`[DRAFT SAVE] Deleted all dashboard records for ${rakeSerialNumber} to create single parent record`);
+        console.log(`[DRAFT SAVE] Deleted all dashboard records for ${rakeSerialNumber} to create single parent record (parent save, no splitting)`);
 
         // Create ONE dashboard record (parent record with null/empty indent_number)
-        // This will be split later when user clicks Proceed -> Yes
+        // This will be split later only when user clicks Proceed and chooses Yes/No.
         await pool.query(
           `
           INSERT INTO dashboard_records (rake_serial_number, indent_number, customer_id, commodity,
@@ -770,7 +781,7 @@ const saveDraft = async (req, res) => {
           `,
           [
             rakeSerialNumber, // Use base rake_serial_number
-            null, // ✅ CRITICAL: Use null/empty indent_number for parent record during Save
+            null, // ✅ Parent record has null/empty indent_number
             header?.customer_id || null, // Use header customer_id if available
             firstCommodity,
             firstWagonDestination,
@@ -781,10 +792,10 @@ const saveDraft = async (req, res) => {
             preservedCreatedTime,
             hasSequentialSerials,
             assignedReviewer,
-            multipleIndentConfirmed, // ✅ Set flag if multiple indent mode with indent numbers filled
+            multipleIndentConfirmed, // Flag that multiple-indent has been configured on parent
           ]
         );
-        console.log(`[DRAFT SAVE] Created single parent dashboard record for ${rakeSerialNumber} (multiple indent mode, not split yet), multiple_indent_confirmed=${multipleIndentConfirmed}`);
+        console.log(`[DRAFT SAVE] Created single parent dashboard record for ${rakeSerialNumber} (multiple indent mode, parent state only), multiple_indent_confirmed=${multipleIndentConfirmed}`);
       }
     }
 
@@ -1942,10 +1953,57 @@ const getDispatch = async (req, res) => {
     }
 
     if (headerRes.rows.length === 0) {
-      console.error(
-        `[GET DISPATCH] No dashboard_records found for rake_serial_number=${rakeSerialNumber} (or parent) and indent_number=${indentNumber || "none"}`
+      console.warn(
+        `[GET DISPATCH] No dashboard_records found for rake_serial_number=${rakeSerialNumber} (or parent) and indent_number=${indentNumber || "none"}. Trying wagon_records fallback.`
       );
-      return res.status(404).json({ message: "Train not found" });
+
+      // ✅ FALLBACK 3: If there is no dashboard record yet (e.g. multiple-indent flow
+      // with single rake serial where dashboard_records wasn't written but wagons exist),
+      // synthesize minimal header data from wagon_records so Dispatch page can still load.
+      try {
+        const wagonHeaderRes = await pool.query(
+          `
+          SELECT rake_serial_number, indent_number
+          FROM wagon_records
+          WHERE rake_serial_number = $1
+          ORDER BY 
+            CASE WHEN indent_number IS NULL OR indent_number = '' THEN 0 ELSE 1 END,
+            indent_number
+          LIMIT 1
+          `,
+          [rakeSerialNumber]
+        );
+
+        if (wagonHeaderRes.rows.length === 0) {
+          console.error(
+            `[GET DISPATCH] No wagon_records found for rake_serial_number=${rakeSerialNumber}. Returning 404.`
+          );
+          return res.status(404).json({ message: "Train not found" });
+        }
+
+        // Synthesize a minimal "header" row compatible with downstream logic.
+        // siding is left null/empty (frontend treats missing siding as "-"),
+        // indent_number and rake_serial_number come from wagon_records.
+        headerRes = {
+          rows: [
+            {
+              siding: null,
+              indent_number: wagonHeaderRes.rows[0].indent_number,
+              rake_serial_number: wagonHeaderRes.rows[0].rake_serial_number,
+            },
+          ],
+        };
+
+        console.warn(
+          `[GET DISPATCH] Using wagon_records fallback header for rake_serial_number=${rakeSerialNumber}, indent_number=${headerRes.rows[0].indent_number || "none"}.`
+        );
+      } catch (fallbackErr) {
+        console.error(
+          `[GET DISPATCH] Error while trying wagon_records fallback for rake_serial_number=${rakeSerialNumber}:`,
+          fallbackErr
+        );
+        return res.status(404).json({ message: "Train not found" });
+      }
     }
 
     // Get the indent_number from the dashboard record (this is the source of truth)
@@ -1965,20 +2023,6 @@ const getDispatch = async (req, res) => {
     }
 
     let dispatchRes = await pool.query(dispatchQuery, dispatchParams);
-
-    // If no dispatch record found with matching indent_number, try to find any dispatch record
-    if (dispatchRes.rows.length === 0) {
-      dispatchQuery = `
-        SELECT * FROM dispatch_records 
-        WHERE rake_serial_number = $1
-        ORDER BY 
-          CASE WHEN indent_number IS NULL OR indent_number = '' THEN 0 ELSE 1 END,
-          indent_number
-        LIMIT 1
-      `;
-      dispatchParams = [rakeSerialNumber];
-      dispatchRes = await pool.query(dispatchQuery, dispatchParams);
-    }
 
     // If this is a child serial number (e.g., 2024-25/01/001-1) and no dispatch records exist,
     // check if parent has dispatch records and copy them
@@ -3729,8 +3773,10 @@ const revokeTrain = async (req, res) => {
       ? `Status revoked from ${status} to LOADING_IN_PROGRESS by SUPER_ADMIN`
       : `Status revoked from ${status} to LOADING_IN_PROGRESS`;
 
+    // ✅ FIX: Use decodedTrainId (actual rake_serial_number with slashes) so that
+    // getActivityTimeline, which queries by rake_serial_number, can see this event.
     await addActivityTimelineEntry(
-      trainId,
+      decodedTrainId,
       indent_number || null,
       activityType,
       revokeUsername,
@@ -4270,34 +4316,130 @@ const markSerialHandled = async (req, res) => {
   const decodedTrainId = trainId.replace(/_/g, "/");
 
   try {
-    // First, find the actual train_id from dashboard_records
-    // Check both train_id and rake_serial_number
-    // ✅ FIX: URL trainId is now always rake_serial_number
     const rakeSerialNumber = decodedTrainId;
 
-    // ✅ FIX: When "No" is selected, set has_sequential_serials = FALSE
-    // This prevents sequential train IDs from being assigned
-    // Use rakeSerialNumber for the update
-    const result = await pool.query(
+    // 1️⃣ Fetch the parent dashboard record (single row with null/empty indent_number)
+    const parentRes = await pool.query(
+      `
+        SELECT rake_serial_number, indent_number, customer_id, commodity, 
+               wagon_destination, status, single_indent, hl_only, siding, 
+               created_time, has_sequential_serials, assigned_reviewer, multiple_indent_confirmed
+        FROM dashboard_records
+        WHERE rake_serial_number = $1
+          AND (indent_number IS NULL OR indent_number = '')
+        LIMIT 1
+      `,
+      [rakeSerialNumber]
+    );
+
+    const parentDashboard = parentRes.rows[0] || null;
+
+    if (!parentDashboard) {
+      return res.status(404).json({ message: "Parent dashboard record not found" });
+    }
+
+    // 2️⃣ Get all distinct indent_numbers from wagon_records for this rake_serial_number
+    const indentRes = await pool.query(
+      `
+        SELECT DISTINCT indent_number
+        FROM wagon_records
+        WHERE rake_serial_number = $1
+          AND indent_number IS NOT NULL
+          AND indent_number <> ''
+        ORDER BY indent_number
+      `,
+      [rakeSerialNumber]
+    );
+
+    const indentNumbers = indentRes.rows.map(r => r.indent_number).filter(Boolean);
+
+    if (indentNumbers.length === 0) {
+      // No child indents to split into; just mark parent as handled and return
+      await pool.query(
+        `
+          UPDATE dashboard_records
+          SET has_sequential_serials = FALSE
+          WHERE rake_serial_number = $1
+        `,
+        [rakeSerialNumber]
+      );
+
+      return res.json({
+        message: "Serial handling marked successfully (no child indents found, parent preserved with has_sequential_serials = FALSE)",
+      });
+    }
+
+    // 3️⃣ For each indent_number, create a new child dashboard record sharing the SAME rake_serial_number
+    //    This is the "multiple rake serial number = NO" behavior: one rake_serial_number, many indent rows.
+    for (const indentNum of indentNumbers) {
+      // Get indent-specific data from wagons (customer_id, commodity, wagon_destination)
+      const indentWagonData = await pool.query(
+        `
+          SELECT DISTINCT customer_id, commodity, wagon_destination
+          FROM wagon_records
+          WHERE rake_serial_number = $1
+            AND indent_number = $2
+          LIMIT 1
+        `,
+        [rakeSerialNumber, indentNum]
+      );
+
+      const indentCustomerId =
+        indentWagonData.rows[0]?.customer_id || parentDashboard.customer_id || null;
+      const indentCommodity =
+        indentWagonData.rows[0]?.commodity || parentDashboard.commodity || null;
+      const indentWagonDestination =
+        indentWagonData.rows[0]?.wagon_destination || parentDashboard.wagon_destination || null;
+
+      await pool.query(
+        `
+          INSERT INTO dashboard_records (
+            rake_serial_number, indent_number, customer_id, commodity,
+            wagon_destination, status, single_indent, hl_only, siding,
+            created_time, has_sequential_serials, assigned_reviewer, multiple_indent_confirmed
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, FALSE, $7, $8, $9, FALSE, $10, TRUE)
+        `,
+        [
+          rakeSerialNumber,
+          indentNum,
+          indentCustomerId,
+          indentCommodity,
+          indentWagonDestination,
+          parentDashboard.status || "DRAFT",
+          parentDashboard.hl_only,
+          parentDashboard.siding,
+          parentDashboard.created_time,
+          parentDashboard.assigned_reviewer || null,
+        ]
+      );
+    }
+
+    // 4️⃣ Mark any existing dashboard_records for this rake_serial_number as has_sequential_serials = FALSE
+    await pool.query(
       `
         UPDATE dashboard_records
         SET has_sequential_serials = FALSE
         WHERE rake_serial_number = $1
-        `,
+      `,
       [rakeSerialNumber]
     );
 
-    // ✅ FIX: Explicitly delete any parent/single-indent records that might have persisted
+    // 5️⃣ Delete the parent/single-indent record(s) so only child rows remain in dashboard
     await pool.query(
-      "DELETE FROM dashboard_records WHERE rake_serial_number = $1 AND (indent_number IS NULL OR indent_number = '' OR single_indent = true)",
+      `
+        DELETE FROM dashboard_records
+        WHERE rake_serial_number = $1
+          AND (indent_number IS NULL OR indent_number = '' OR single_indent = true)
+      `,
       [rakeSerialNumber]
     );
 
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: "Train not found" });
-    }
-
-    res.json({ message: "Serial handling marked successfully (sequential numbers disabled)" });
+    res.json({
+      message:
+        "Serial handling marked successfully (multiple rake serial number = NO; parent split into per-indent dashboard records sharing the same rake_serial_number).",
+      indent_numbers: indentNumbers,
+    });
   } catch (err) {
     console.error("MARK SERIAL HANDLED ERROR:", err);
     res.status(500).json({ message: "Failed to mark serial handling" });
