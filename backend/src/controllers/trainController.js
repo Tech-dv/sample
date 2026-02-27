@@ -915,41 +915,17 @@ const saveDraft = async (req, res) => {
     }
 
     /* ===============================
-       3️⃣ DELETE OLD WAGONS
+       3️⃣ UPSERT WAGONS (UPDATE OR INSERT) - PRESERVES ALL EXISTING DATA
        =============================== */
-    // In multiple indent mode, only delete wagons for the indent numbers we're saving
-    // In single indent mode, delete all wagons for this train
-    // ✅ FIX: Use rake_serial_number only for deletion
-    if (singleIndent) {
-      await pool.query(
-        "DELETE FROM wagon_records WHERE rake_serial_number = $1",
-        [rakeSerialNumber]
-      );
-    } else {
-      // ✅ FIX: If saving a child record (specific indent), only delete wagons for THAT indent
-      if (indentNumberFromQuery && indentNumberFromQuery !== '') {
-        await pool.query(
-          `DELETE FROM wagon_records 
-           WHERE rake_serial_number = $1 AND indent_number = $2`,
-          [rakeSerialNumber, indentNumberFromQuery]
-        );
-        console.log(`[DRAFT SAVE] Deleted wagons for rake_serial_number=${rakeSerialNumber}, indent_number=${indentNumberFromQuery} (child record save)`);
-      } else {
-        // ✅ CRITICAL FIX: In multiple indent mode (parent), delete ALL wagons for this rake_serial_number
-        // During Save, we're saving all wagons together (not split yet), so we need to delete all existing wagons
-        // This ensures we don't have orphaned wagons from previous saves
-        // ✅ FIX: Use rake_serial_number only
-        await pool.query(
-          `DELETE FROM wagon_records 
-           WHERE rake_serial_number = $1`,
-          [rakeSerialNumber]
-        );
-        console.log(`[DRAFT SAVE] Deleted all wagons for rake_serial_number=${rakeSerialNumber} in multiple indent mode (parent save)`);
-      }
-    }
+    // ✅ CRITICAL FIX: Use UPSERT (UPDATE-or-INSERT) instead of DELETE-then-INSERT
+    // This automatically preserves ALL existing fields (tower_number, loaded_bag_count, 
+    // unloaded_bag_count, loading_start_time, loading_end_time) when wagon_number or other fields change
+    // Matching is done by: tower_number + rake_serial_number + indent_number (stable identifiers)
+    // This ensures NO data loss when editing any field, including wagon_number
+    console.log(`[DRAFT SAVE] Using UPSERT approach to preserve all existing data automatically`);
 
     /* ===============================
-       4️⃣ INSERT WAGONS (TABLE-ALIGNED)
+       4️⃣ UPSERT WAGONS (UPDATE OR INSERT)
        =============================== */
     // ✅ FIX: During Save, ALWAYS use base rake_serial_number for all wagons
     // DO NOT use sequential rake_serial_numbers - splitting only happens when user clicks Proceed -> Yes
@@ -1132,66 +1108,147 @@ const saveDraft = async (req, res) => {
         console.log(`[SUCCESS] Preserved loading times for wagon tower_number=${w.tower_number}, indent_number=${indentNum}, wagon_number=${w.wagon_number || 'N/A'}: start=${loadingStartTime || 'null'}, end=${loadingEndTime || 'null'} (matched via: ${matchedStrategy || 'unknown'})`);
       }
 
-      await pool.query(
-        `
-      INSERT INTO wagon_records (
-        wagon_number,
-        wagon_type,
-        cc_weight,
-        sick_box,
-        wagon_to_be_loaded,
-        tower_number,
-        loaded_bag_count,
-        unloaded_bag_count,
-        loading_start_time,
-        loading_end_time,
-        seal_number,
-        stoppage_time,
-        remarks,
-        loading_status,
-        loading_status_manual_override,
-        indent_number,
-        wagon_destination,
-        commodity,
-        customer_id,
-        rake_serial_number,
-        siding
-      )
-      VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
-      )
-      `,
-        [
-          w.wagon_number || null,
-          w.wagon_type || null,
-          w.cc_weight || null,
-          w.sick_box === "Yes",
-          w.wagon_to_be_loaded || null,
-          w.tower_number,
-          loadedBagCount,
-          unloadedBagCount,
-          loadingStartTime,
-          loadingEndTime,
-          (() => {
-            // ✅ CRITICAL FIX: Always process seal_number, regardless of indent_number
-            const sealNum = (w.seal_number && String(w.seal_number).trim() !== "") ? String(w.seal_number).trim() : null;
-            console.log(`[DRAFT SAVE] Saving seal_number for wagon tower_number=${w.tower_number}, indent_number=${indentNum || 'empty'}, seal_number="${sealNum}", wagon_number=${w.wagon_number || 'N/A'}`);
-            console.log(`[DRAFT SAVE] Full wagon object keys:`, Object.keys(w));
-            console.log(`[DRAFT SAVE] w.seal_number value:`, w.seal_number, `type:`, typeof w.seal_number);
-            return sealNum;
-          })(),
-          w.stoppage_time || 0,
-          w.remarks || null,
-          loadingStatus,
-          Boolean(w.loading_status_manual_override), // Preserve manual override flag across saves
-          w.indent_number || header?.indent_number || null,
-          w.wagon_destination || null,
-          w.commodity || null,
-          w.customer_id || null,
-          wagonRakeSerialNumber, // ✅ FIX: Use indent-specific rake_serial_number
-          header?.siding || null, // Add siding from header
-        ]
+      // ✅ CRITICAL FIX: Use UPSERT (UPDATE-or-INSERT) to preserve ALL existing data
+      // Check if wagon exists by tower_number + rake_serial_number + indent_number
+      const finalIndentNumber = w.indent_number || header?.indent_number || null;
+      
+      const existingWagonCheck = await pool.query(
+        `SELECT id, loaded_bag_count, unloaded_bag_count, loading_start_time, loading_end_time, loading_status_manual_override
+         FROM wagon_records 
+         WHERE rake_serial_number = $1 AND tower_number = $2 AND (indent_number = $3 OR (indent_number IS NULL AND $3 IS NULL))`,
+        [wagonRakeSerialNumber, w.tower_number, finalIndentNumber]
       );
+
+      const sealNum = (w.seal_number && String(w.seal_number).trim() !== "") ? String(w.seal_number).trim() : null;
+      console.log(`[DRAFT SAVE] Saving seal_number for wagon tower_number=${w.tower_number}, indent_number=${indentNum || 'empty'}, seal_number="${sealNum}", wagon_number=${w.wagon_number || 'N/A'}`);
+
+      if (existingWagonCheck.rows.length > 0) {
+        // ✅ UPDATE existing wagon - preserve ALL fields that aren't being updated
+        // Only update the fields sent from frontend, keep all other fields (including auto-populated ones)
+        const existingWagon = existingWagonCheck.rows[0];
+        
+        // ✅ CRITICAL FIX: Always prioritize database values (most up-to-date source of truth)
+        // Database values are the authoritative source since they reflect the latest state
+        // Only use existingTimesMap values if database values are null/undefined
+        const finalLoadedBagCount = existingWagon.loaded_bag_count != null 
+          ? existingWagon.loaded_bag_count 
+          : (loadedBagCount || 0);
+        const finalUnloadedBagCount = existingWagon.unloaded_bag_count != null 
+          ? existingWagon.unloaded_bag_count 
+          : (unloadedBagCount || 0);
+        const finalLoadingStartTime = existingWagon.loading_start_time || loadingStartTime || null;
+        const finalLoadingEndTime = existingWagon.loading_end_time || loadingEndTime || null;
+        
+        // Preserve loading_status_manual_override if it was set previously and frontend didn't send a new value
+        const finalManualOverride = w.loading_status_manual_override !== undefined 
+          ? Boolean(w.loading_status_manual_override)
+          : (existingWagon.loading_status_manual_override || false);
+
+        await pool.query(
+          `
+          UPDATE wagon_records SET
+            wagon_number = $1,
+            wagon_type = $2,
+            cc_weight = $3,
+            sick_box = $4,
+            wagon_to_be_loaded = $5,
+            loaded_bag_count = $6,
+            unloaded_bag_count = $7,
+            loading_start_time = $8,
+            loading_end_time = $9,
+            seal_number = $10,
+            stoppage_time = $11,
+            remarks = $12,
+            loading_status = $13,
+            loading_status_manual_override = $14,
+            indent_number = $15,
+            wagon_destination = $16,
+            commodity = $17,
+            customer_id = $18
+          WHERE rake_serial_number = $19 AND tower_number = $20 AND (indent_number = $21 OR (indent_number IS NULL AND $21 IS NULL))
+          `,
+          [
+            w.wagon_number || null,
+            w.wagon_type || null,
+            w.cc_weight || null,
+            w.sick_box === "Yes",
+            w.wagon_to_be_loaded || null,
+            finalLoadedBagCount,
+            finalUnloadedBagCount,
+            finalLoadingStartTime,
+            finalLoadingEndTime,
+            sealNum,
+            w.stoppage_time || 0,
+            w.remarks || null,
+            loadingStatus,
+            finalManualOverride,
+            finalIndentNumber,
+            w.wagon_destination || null,
+            w.commodity || null,
+            w.customer_id || null,
+            wagonRakeSerialNumber,
+            w.tower_number,
+            finalIndentNumber,
+          ]
+        );
+        console.log(`[DRAFT SAVE] UPDATED existing wagon: tower_number=${w.tower_number}, indent_number=${finalIndentNumber || 'null'}, preserved bag counts and loading times`);
+      } else {
+        // ✅ INSERT new wagon
+        await pool.query(
+          `
+          INSERT INTO wagon_records (
+            wagon_number,
+            wagon_type,
+            cc_weight,
+            sick_box,
+            wagon_to_be_loaded,
+            tower_number,
+            loaded_bag_count,
+            unloaded_bag_count,
+            loading_start_time,
+            loading_end_time,
+            seal_number,
+            stoppage_time,
+            remarks,
+            loading_status,
+            loading_status_manual_override,
+            indent_number,
+            wagon_destination,
+            commodity,
+            customer_id,
+            rake_serial_number,
+            siding
+          )
+          VALUES (
+            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
+          )
+          `,
+          [
+            w.wagon_number || null,
+            w.wagon_type || null,
+            w.cc_weight || null,
+            w.sick_box === "Yes",
+            w.wagon_to_be_loaded || null,
+            w.tower_number,
+            loadedBagCount,
+            unloadedBagCount,
+            loadingStartTime,
+            loadingEndTime,
+            sealNum,
+            w.stoppage_time || 0,
+            w.remarks || null,
+            loadingStatus,
+            Boolean(w.loading_status_manual_override),
+            finalIndentNumber,
+            w.wagon_destination || null,
+            w.commodity || null,
+            w.customer_id || null,
+            wagonRakeSerialNumber,
+            header?.siding || null,
+          ]
+        );
+        console.log(`[DRAFT SAVE] INSERTED new wagon: tower_number=${w.tower_number}, indent_number=${finalIndentNumber || 'null'}`);
+      }
 
     }
 
